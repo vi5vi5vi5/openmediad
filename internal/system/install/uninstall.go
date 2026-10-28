@@ -41,7 +41,7 @@ func (in *Installer) Uninstall(purge bool) (warnings []string, err error) {
 			path := layout.Root + e.Path
 			switch {
 			case e.Link != "":
-				target, err := os.Readlink(path)
+				target, err := readLink(path)
 				switch {
 				case errors.Is(err, os.ErrNotExist):
 				case err != nil || target != e.Link:
@@ -113,7 +113,7 @@ func verify(m *Manifest) error {
 			continue
 		}
 		if e.Link != "" {
-			if t, err := os.Readlink(path); err == nil && t == e.Link {
+			if t, err := readLink(path); err == nil && t == e.Link {
 				errs = append(errs, fmt.Errorf("%s не удалён", e.Path))
 			}
 			continue
@@ -131,7 +131,7 @@ func guessManifest() *Manifest {
 	if b, err := os.ReadFile(layout.Init()); err == nil && bytes.Contains(b, []byte(initMarker)) {
 		m.Files = append(m.Files, Entry{Path: layout.InitScript, SHA: sha(b)})
 	}
-	if t, err := os.Readlink(layout.Root + LinkPath); err == nil && t == deviceBin {
+	if t, err := readLink(layout.Root + LinkPath); err == nil && t == deviceBin {
 		m.Files = append(m.Files, Entry{Path: LinkPath, Link: deviceBin})
 	}
 	return m

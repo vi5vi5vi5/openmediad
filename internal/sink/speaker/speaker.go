@@ -5,9 +5,6 @@
 package speaker
 
 import (
-	"sync"
-	"time"
-
 	"openmediad/internal/audio"
 	"openmediad/internal/sink/alsa"
 )
@@ -30,20 +27,5 @@ func (s *Sink) Open(f audio.Format) (audio.Output, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Output{p: p}, nil
+	return alsa.NewOutput(p), nil
 }
-
-// Output — один запущенный aplay.
-type Output struct {
-	p     *alsa.Player
-	abort sync.Once
-}
-
-// Write передаёт PCM aplay; блокируется, когда труба и буфер PCM заполнены — это и есть темп воспроизведения.
-func (o *Output) Write(b []byte) (int, error) { return o.p.Write(b) }
-
-// Drain закрывает вход aplay и ждёт, пока он доиграет остаток (не дольше 5 с, потом SIGINT).
-func (o *Output) Drain() { o.p.Finish(5 * time.Second) }
-
-// Abort обрывает aplay сигналом SIGINT (не SIGKILL: см. internal/sink/alsa). Повторный вызов ничего не делает.
-func (o *Output) Abort() { o.abort.Do(func() { o.p.Abort(2 * time.Second) }) }

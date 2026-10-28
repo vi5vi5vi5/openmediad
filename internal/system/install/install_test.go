@@ -29,6 +29,11 @@ func newBox(t *testing.T) *box {
 	for _, d := range []string{"etc/init.d", "usr/bin", "proc", "tmp"} {
 		os.MkdirAll(filepath.Join(b.root, d), 0o755)
 	}
+	// установка делает ссылку /usr/bin/openmediad; в Windows без режима разработчика ссылки создавать нельзя
+	if err := os.Symlink("probe", filepath.Join(b.root, "tmp", "probe")); err != nil {
+		t.Skipf("символические ссылки недоступны: %v", err)
+	}
+	os.Remove(filepath.Join(b.root, "tmp", "probe"))
 	os.WriteFile(filepath.Join(b.root, "proc", "mounts"), []byte("ubi0:rootfs / ubifs ro,relatime 0 0\n"), 0o644)
 	oldRoot, oldProc := layout.Root, proc.Root
 	layout.Root, proc.Root = b.root, filepath.Join(b.root, "proc")
@@ -77,7 +82,7 @@ func TestFreshInstallAndUninstall(t *testing.T) {
 	if !strings.Contains(b.read("etc/init.d/S98openmediad"), "D=/data/opt/openmediad") {
 		t.Error("скрипт автозапуска не записан")
 	}
-	if l, _ := os.Readlink(b.path("usr/bin/openmediad")); l != "/data/opt/openmediad/bin/openmediad" {
+	if l, _ := readLink(b.path("usr/bin/openmediad")); l != "/data/opt/openmediad/bin/openmediad" {
 		t.Errorf("ссылка: %q", l)
 	}
 	if g := b.read("data/opt/openmediad/guard.sh"); !strings.Contains(g, `BIN="/data/opt/openmediad/bin/openmediad"`) {

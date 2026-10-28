@@ -97,7 +97,7 @@ func TestExplainFileStartTellsRingFromOneShot(t *testing.T) {
 
 func TestNoteFileOnce(t *testing.T) {
 	e := Note("file-once", "0123456789", "/system/vendor/quasar/sounds/common/spotter_start.mp3")
-	if !strings.Contains(e.Msg, "spotter_start.mp3") || !strings.Contains(e.Msg, "играет mediad") || e.Why == "" {
+	if !strings.Contains(e.Msg, "spotter_start.mp3") || !strings.Contains(e.Msg, "системный звук") || !strings.Contains(e.Why, "один раз") {
 		t.Fatalf("msg=%q why=%q", e.Msg, e.Why)
 	}
 }

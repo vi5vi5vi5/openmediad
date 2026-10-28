@@ -39,6 +39,28 @@ func TestPausePlaybackMatchesRealTraffic(t *testing.T) {
 	}
 }
 
+// Кадры maind --cli ('p', 'n', 'l' и регистрация клиента), запись 28.10.2026.
+func TestPlaybackCommandsMatchRealTraffic(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		got  []byte
+		want string
+	}{
+		{"TogglePlayback", TogglePlayback("c515cff6-e892-4684-95fd-2bf9fe14000c", "Keyboard"),
+			"e20f5b3a19506c61796261636b436f6e74726f6c4361706162696c6974796a3e080210012a36080e10031801222463353135636666362d653839322d343638342d393566642d32626639666531343030306332084b6579626f6172643800e80fd201"},
+		{"NextTrack", NextTrack("894155f0-c9ab-4132-9165-a56460e62234", "Keyboard"),
+			"e20f593a19506c61796261636b436f6e74726f6c4361706162696c6974796a3c08062a36080e10031801222438393431353566302d633961622d343133322d393136352d61353634363065363232333432084b6579626f6172643800e80fd201"},
+		{"PrevTrack", PrevTrack("70f7c518-7649-4c46-8bec-84ca617bec6f", "Keyboard"),
+			"e20f593a19506c61796261636b436f6e74726f6c4361706162696c6974796a3c08072a36080e10031801222437306637633531382d373634392d346334362d386265632d38346361363137626563366632084b6579626f6172643800e80fd201"},
+		{"RegisterEndpoint", RegisterEndpoint("75a8a194-aca7-47aa-8816-15d0f422db21", "cli"),
+			"e20f410a2d0a2437356138613139342d616361372d343761612d383831362d31356430663432326462323110022203636c693a10456e64706f696e7453746f726167655fe80fd201"},
+	} {
+		if want := unhex(t, c.want); !bytes.Equal(c.got, want) {
+			t.Errorf("%s:\n получили %x\n ждали    %x", c.name, c.got, want)
+		}
+	}
+}
+
 func TestUnwrapRealFrames(t *testing.T) {
 	m, err := Unwrap(unhex(t, realCancelDialog))
 	if err != nil {

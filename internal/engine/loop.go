@@ -13,6 +13,15 @@ import (
 // chunk — порция вывода: 50 мс звука. Между порциями проверяются пауза, перемотка и громкость.
 const chunk = 50 * time.Millisecond
 
+// Переезд на другой выход, когда вывод отказал посреди звука (отключились наушники): не больше maxReroutes подряд,
+// с паузой rerouteWait перед каждым (успевают прийти сигналы BlueZ, и маршрутизатор не выберет пропавший выход снова).
+// Счётчик сбрасывается после rerouteReset спокойной работы.
+const (
+	maxReroutes  = 3
+	rerouteWait  = 300 * time.Millisecond
+	rerouteReset = 10 * time.Second
+)
+
 // loopRun — состояние одного цикла вывода (от Play до паузы, конца или закрытия).
 type loopRun struct {
 	s       *Stream
@@ -29,6 +38,9 @@ type loopRun struct {
 
 	an        *spectrum.Analyzer
 	specStart bool // служебное сообщение о старте/продолжении потока спектра уже ушло
+
+	reroutes  int       // переездов на другой выход подряд
+	rerouteAt time.Time // последний переезд
 }
 
 // loop гонит звук источника в вывод, пока не сменится поколение (пауза, закрытие). В конце звука доигрывает остаток
@@ -143,10 +155,15 @@ func (r *loopRun) step(buf []byte) bool {
 	r.gain = audio.ApplyGain(p, r.gain, s.e.ClassGain(s.class)*s.opt.Gain)
 	r.spectrum(p)
 	if _, err := r.out.Write(p); err != nil {
-		if !s.stopped(r.gen) {
-			s.fail(fmt.Errorf("запись в вывод %s: %w", s.class, err))
+		if s.stopped(r.gen) {
+			return false
 		}
-		return false
+		if !r.reroute(err, p) {
+			s.fail(fmt.Errorf("запись в вывод %s: %w", s.class, err))
+			return false
+		}
+	} else if r.reroutes > 0 && s.e.now().Sub(r.rerouteAt) > rerouteReset {
+		r.reroutes = 0
 	}
 	s.mu.Lock()
 	if s.seekGen == sg {
@@ -163,6 +180,45 @@ func (r *loopRun) step(buf []byte) bool {
 		s.ev.Playing()
 	}
 	return true
+}
+
+// reroute переводит поток на другой выход маршрута, когда текущий отказал (наушники отключились посреди звука), и пишет
+// в него порцию p. Звук, лежавший в буферах отказавшего вывода, пропадает (доли секунды); позиция по часам начинается
+// заново с уже записанного. false — переехать не вышло (поток останавливается или выходов нет).
+func (r *loopRun) reroute(cause error, p []byte) bool {
+	s := r.s
+	for r.reroutes < maxReroutes {
+		r.reroutes++
+		r.rerouteAt = s.e.now()
+		r.out.Abort()
+		time.Sleep(rerouteWait)
+		if s.stopped(r.gen) {
+			return false
+		}
+		out, err := s.e.Router.Output(s.class, s.f)
+		if err != nil {
+			s.e.logf("поток %s: вывод отказал (%v), другого выхода нет: %v", s.id, cause, err)
+			return false
+		}
+		s.mu.Lock()
+		if s.gen != r.gen || s.closed {
+			s.mu.Unlock()
+			out.Abort()
+			return false
+		}
+		s.out = out
+		s.mu.Unlock()
+		r.out = out
+		r.firstAt = time.Time{} // позиция по часам — от первой записи в новый вывод
+		s.outAt.Store(0)
+		s.e.logf("поток %s: вывод отказал (%v) — звук переведён на другой выход маршрута %s", s.id, cause, s.class)
+		_, err = out.Write(p)
+		if err == nil {
+			return true
+		}
+		cause = err
+	}
+	return false
 }
 
 // finish — выход из цикла: оборвать вывод (если не доигран), вернуть непрозвучавшее при паузе, закрыть поток спектра.

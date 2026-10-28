@@ -161,12 +161,27 @@ func Wrap(t Type, body []byte) []byte {
 	return pb.AppendUint(out, 253, uint64(t))
 }
 
-// Remoting собирает вызов метода капабилити: {7: объект, method: тело} в конверте типа 210.
+// Remoting собирает вызов метода капабилити: {7: объект, method: тело} в конверте типа 210. Поля — по возрастанию
+// номера, как их пишет прошивка (у EndpointStorage_ метод 1 идёт раньше объекта).
 func Remoting(object string, method uint64, body []byte) []byte {
 	var b []byte
-	b = pb.AppendString(b, 7, object)
-	b = pb.AppendBytes(b, method, body)
+	if method < 7 {
+		b = pb.AppendBytes(b, method, body)
+		b = pb.AppendString(b, 7, object)
+	} else {
+		b = pb.AppendString(b, 7, object)
+		b = pb.AppendBytes(b, method, body)
+	}
 	return Wrap(TypeRemoting, b)
+}
+
+// RegisterEndpoint — регистрация клиента у aliced (EndpointStorage_, метод 1): maind --cli шлёт её первой, до команд.
+func RegisterEndpoint(id, name string) []byte {
+	var m []byte
+	m = pb.AppendString(m, 1, id)
+	m = pb.AppendUint(m, 2, 2)
+	m = pb.AppendString(m, 4, name)
+	return Remoting("EndpointStorage_", 1, m)
 }
 
 // CancelDialog — отмена текущего диалога Алисы (AliceCapabilityMethod, вид 3; та же команда, что 'c' в maind --cli).
@@ -174,9 +189,29 @@ func CancelDialog() []byte {
 	return Remoting("AliceCapability", 8, pb.AppendUint(nil, 1, 3))
 }
 
+// Виды команд PlaybackControlCapability (поле 1 метода 13), сняты с maind --cli 28.10.2026.
+const (
+	playbackPause  = 1 // 'o'
+	playbackToggle = 2 // 'p': пауза или продолжить
+	playbackNext   = 6 // 'n'
+	playbackPrev   = 7 // 'l'
+)
+
 // PausePlayback — пауза штатного плеера (PlaybackControlCapability, вид 1; 'o' в maind --cli).
 // id — произвольный UUID запроса, source — метка источника (в логе прошивки видна как «Keyboard»).
-func PausePlayback(id, source string) []byte {
+func PausePlayback(id, source string) []byte { return playbackControl(playbackPause, id, source) }
+
+// TogglePlayback — пауза или продолжить (вид 2; 'p'). С флагом 2 (просить музыку): если продолжать нечего, платформа
+// просит музыку у облака.
+func TogglePlayback(id, source string) []byte { return playbackControl(playbackToggle, id, source) }
+
+// NextTrack — следующий трек (вид 6; 'n').
+func NextTrack(id, source string) []byte { return playbackControl(playbackNext, id, source) }
+
+// PrevTrack — предыдущий трек (вид 7; 'l').
+func PrevTrack(id, source string) []byte { return playbackControl(playbackPrev, id, source) }
+
+func playbackControl(kind uint64, id, source string) []byte {
 	var src []byte
 	src = pb.AppendUint(src, 1, 14)
 	src = pb.AppendUint(src, 2, 3)
@@ -184,7 +219,10 @@ func PausePlayback(id, source string) []byte {
 	src = pb.AppendString(src, 4, id)
 	src = pb.AppendString(src, 6, source)
 	var m []byte
-	m = pb.AppendUint(m, 1, 1)
+	m = pb.AppendUint(m, 1, kind)
+	if kind == playbackToggle {
+		m = pb.AppendUint(m, 2, 1)
+	}
 	m = pb.AppendBytes(m, 5, src)
 	m = pb.AppendUint(m, 7, 0)
 	return Remoting("PlaybackControlCapability", 13, m)

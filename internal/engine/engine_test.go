@@ -220,6 +220,90 @@ func TestBreakAfterSoundIsEnded(t *testing.T) {
 	}
 }
 
+// Вывод отказал посреди звука (отключились наушники): поток переезжает на следующий выход маршрута и звучит дальше —
+// без ENDED, а порция, которую не принял старый вывод, уходит в новый (со стороны движка звук непрерывен).
+func TestOutputFailureMovesStreamToNextOutput(t *testing.T) {
+	r := newRig(t)
+	n := 0
+	r.mkOut = func() (*memOut, error) {
+		n++
+		if n == 1 {
+			return &memOut{failAt: 20000}, nil
+		}
+		return &memOut{}, nil
+	}
+	data := pcm(60000)
+	r.e.NewStream("a", Music, &memSource{f: audio.Stereo48, data: data}, Options{}, r.events4("a")).Play()
+	for _, want := range []string{"ready a", "playing a", "ended a"} {
+		if ev := r.next(t); ev != want {
+			t.Fatalf("ждали %q, пришло %q", want, ev)
+		}
+	}
+	if len(r.outs) != 2 {
+		t.Fatalf("выходов открыто %d, ждали 2", len(r.outs))
+	}
+	got := append(r.out(0).bytes(), r.out(1).bytes()...)
+	if !bytes.Equal(got, data) {
+		t.Fatalf("звук после переезда не непрерывен: %d байт из %d", len(got), len(data))
+	}
+	if !r.out(0).aborted.Load() || !r.out(1).drained.Load() {
+		t.Fatal("отказавший вывод обрывается, новый доигрывается")
+	}
+}
+
+// Появился выход лучше (подключились наушники): играющий поток нужного класса заново выбирает выход и доигрывает в нём —
+// без новых событий; потоки других классов и закрытые не трогаются.
+func TestRerouteMovesPlayingStream(t *testing.T) {
+	r := newRig(t)
+	r.mkOut = func() (*memOut, error) { return &memOut{delay: 2 * time.Millisecond}, nil }
+	a := r.e.NewStream("a", Music, &memSource{f: audio.Stereo48, data: pcm(400000)}, Options{}, r.events4("a"))
+	a.Play()
+	for _, want := range []string{"ready a", "playing a"} {
+		if ev := r.next(t); ev != want {
+			t.Fatalf("ждали %q, пришло %q", want, ev)
+		}
+	}
+	closed := r.e.NewStream("b", Music, &memSource{f: audio.Stereo48, data: pcm(1000)}, Options{}, Events{})
+	closed.Close()
+	if n := r.e.Reroute(func(c Class) bool { return c == Voice }); n != 0 {
+		t.Fatalf("музыку по маршруту голоса не трогаем: %d", n)
+	}
+	if n := r.e.Reroute(func(c Class) bool { return c == Music }); n != 1 {
+		t.Fatalf("переведено %d, ждали 1", n)
+	}
+	if ev := r.next(t); ev != "ended a" {
+		t.Fatalf("ждали конец без лишних событий, пришло %q", ev)
+	}
+	r.mu.Lock()
+	n := len(r.outs)
+	r.mu.Unlock()
+	if n != 2 || !r.out(0).aborted.Load() || len(r.out(1).bytes()) == 0 || !r.out(1).drained.Load() {
+		t.Fatalf("выходов %d: старый оборван, новый доигран", n)
+	}
+	if r.e.Reroute(func(Class) bool { return true }) != 0 {
+		t.Fatal("доигравший поток не переводится")
+	}
+}
+
+// Выхода на замену нет — поток кончается, как раньше (звучал — ENDED).
+func TestOutputFailureWithoutOtherOutputEnds(t *testing.T) {
+	r := newRig(t)
+	n := 0
+	r.mkOut = func() (*memOut, error) {
+		n++
+		if n == 1 {
+			return &memOut{failAt: 20000}, nil
+		}
+		return nil, errors.New("выходов нет")
+	}
+	r.e.NewStream("a", Music, &memSource{f: audio.Stereo48, data: pcm(60000)}, Options{}, r.events4("a")).Play()
+	for _, want := range []string{"ready a", "playing a", "ended a"} {
+		if ev := r.next(t); ev != want {
+			t.Fatalf("ждали %q, пришло %q", want, ev)
+		}
+	}
+}
+
 func TestCloseIsSilentAndCloseWaitStopsOutput(t *testing.T) {
 	r := newRig(t)
 	r.mkOut = func() (*memOut, error) { return &memOut{delay: 5 * time.Millisecond}, nil }

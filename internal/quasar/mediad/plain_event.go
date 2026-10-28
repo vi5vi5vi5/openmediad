@@ -55,12 +55,7 @@ func (m PlainMeta) Event(s PlainSnap) []byte {
 	b = pb.AppendUint(b, 1, uint64(s.Kind))
 	b = pb.AppendUint(b, 2, uint64(s.State))
 	b = pb.AppendBytes(b, 3, m.eventDesc(s))
-	if m.PlayerRaw != nil {
-		b = pb.AppendBytes(b, 4, m.PlayerRaw)
-	} else {
-		pl := pb.AppendUint(nil, 1, uint64(m.Player.Kind))
-		b = pb.AppendBytes(b, 4, pb.AppendString(pl, 2, m.Player.ID))
-	}
+	b = m.appendPlayer(b)
 	b = pb.AppendUint(b, 5, s.Start)
 	b = pb.AppendUint(b, 7, s.Stop)
 	b = pb.AppendString(b, 8, "")
@@ -74,6 +69,28 @@ func (m PlainMeta) Event(s PlainSnap) []byte {
 		b = pb.AppendUint(b, 17, b2u(s.T17))
 	}
 	return b
+}
+
+// Diag собирает событие вида 5 (diag): состояние, дескриптор `{8: ""}`, плеер и диагностика, без времени, позиции и прочих
+// полей верхнего уровня. Плеер файлов присылает его один раз, как только узнал битрейт файла (сразу за первым progress
+// в PLAYING); played_sec в нём не бывает. Сверено побайтно с записями (TestFileDiagMatchesRecordings).
+func (m PlainMeta) Diag(s PlainSnap) []byte {
+	var b []byte
+	b = pb.AppendUint(b, 1, 5)
+	b = pb.AppendUint(b, 2, uint64(s.State))
+	b = pb.AppendBytes(b, 3, pb.AppendString(nil, 8, ""))
+	b = m.appendPlayer(b)
+	s.HasPlayed = false
+	return append(b, plainDiag(s)...)
+}
+
+// appendPlayer — поле 4 события: плеер из команды как есть или собранный из вида и uuid.
+func (m PlainMeta) appendPlayer(b []byte) []byte {
+	if m.PlayerRaw != nil {
+		return pb.AppendBytes(b, 4, m.PlayerRaw)
+	}
+	pl := pb.AppendUint(nil, 1, uint64(m.Player.Kind))
+	return pb.AppendBytes(b, 4, pb.AppendString(pl, 2, m.Player.ID))
 }
 
 func (m PlainMeta) eventDesc(s PlainSnap) []byte {

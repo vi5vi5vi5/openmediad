@@ -101,7 +101,7 @@ func TestComponentsTable(t *testing.T) {
 		t.Fatalf("код %d", code)
 	}
 	// в тестах cli компоненты не импортированы: все готовые — «не в сборке», планы — с фазой
-	for _, want := range []string{"yandex", "bluetooth", "фаза 6", "демон не запущен"} {
+	for _, want := range []string{"yandex", "bluetooth", "фаза 7", "демон не запущен"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("нет %q в выводе:\n%s", want, out)
 		}
@@ -154,5 +154,20 @@ func TestToneHasSoftEdges(t *testing.T) {
 	last := int16(binary.LittleEndian.Uint16(b[len(b)-2:]))
 	if first != 0 || last > 50 || last < -50 {
 		t.Errorf("края не плавные: %d … %d", first, last)
+	}
+}
+
+func TestBluetoothLine(t *testing.T) {
+	base := map[string]any{"bus": true, "connected": true, "name": "ROG", "device": "A0:AD", "volume_127": float64(63)}
+	if got := bluetoothLine(base); got != "ROG (A0:AD) подключены, громкость 63/127 за колонкой; канал в наушники не открыт" {
+		t.Fatalf("без канала: %q", got)
+	}
+	base["channel"], base["streams"] = true, float64(2)
+	if got := bluetoothLine(base); !strings.HasSuffix(got, "; канал открыт, потоков 2") {
+		t.Fatalf("с каналом: %q", got)
+	}
+	base["buttons"] = true
+	if got := bluetoothLine(base); !strings.HasSuffix(got, "; кнопки наушников работают") {
+		t.Fatalf("с кнопками: %q", got)
 	}
 }

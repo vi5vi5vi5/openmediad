@@ -72,13 +72,14 @@ type rig struct {
 	sinks    []*fakeSink
 	decodes  atomic.Int32
 	playing  chan [3]any
+	ended    chan string
 	failed   chan error
 	mu       sync.Mutex
 	newSinks int
 }
 
 func newRig(clip *Clip, decErr error) *rig {
-	r := &rig{playing: make(chan [3]any, 8), failed: make(chan error, 8)}
+	r := &rig{playing: make(chan [3]any, 8), ended: make(chan string, 8), failed: make(chan error, 8)}
 	eng := &engine.Engine{Router: engine.RouterFunc(func(engine.Class, audio.Format) (audio.Output, error) {
 		r.mu.Lock()
 		defer r.mu.Unlock()
@@ -106,6 +107,7 @@ func newRig(clip *Clip, decErr error) *rig {
 
 // события Backend для автомата mediad
 func (r *rig) FilePlaying(id string, durMs, bitrate uint64) { r.playing <- [3]any{id, durMs, bitrate} }
+func (r *rig) FileEnded(id string)                          { r.ended <- id }
 func (r *rig) FileFailed(id string, err error)              { r.failed <- err }
 
 func (r *rig) sink(i int) *fakeSink {
@@ -117,7 +119,7 @@ func (r *rig) sink(i int) *fakeSink {
 func TestLoopsGaplesslyUntilStopped(t *testing.T) {
 	pcm := pattern(20000) // три записи на проход: 8192 + 8192 + 3616
 	r := newRig(&Clip{PCM: pcm, Bitrate: 64}, nil)
-	r.b.Start("a", "/system/vendor/quasar/sounds/common/timer.wav")
+	r.b.Start("a", "/system/vendor/quasar/sounds/common/timer.wav", true)
 	select {
 	case p := <-r.playing:
 		if p[0] != "a" || p[1] != uint64(20000/bytesPerMs) || p[2] != uint64(64) {
@@ -151,7 +153,7 @@ func TestLoopsGaplesslyUntilStopped(t *testing.T) {
 
 func TestDecodeFailureReportsAndNeverPlays(t *testing.T) {
 	r := newRig(nil, errors.New("gst упал"))
-	r.b.Start("a", "/system/vendor/quasar/sounds/common/timer.wav")
+	r.b.Start("a", "/system/vendor/quasar/sounds/common/timer.wav", true)
 	select {
 	case err := <-r.failed:
 		if !strings.Contains(err.Error(), "gst упал") || !strings.Contains(err.Error(), "раскодирование") {
@@ -180,7 +182,7 @@ func TestDecodeFailureReportsAndNeverPlays(t *testing.T) {
 
 func TestEmptyClipIsAFailure(t *testing.T) {
 	r := newRig(&Clip{}, nil)
-	r.b.Start("a", "/system/vendor/quasar/sounds/common/timer.wav")
+	r.b.Start("a", "/system/vendor/quasar/sounds/common/timer.wav", true)
 	select {
 	case err := <-r.failed:
 		if !strings.Contains(err.Error(), "нет звука") {
@@ -194,7 +196,7 @@ func TestEmptyClipIsAFailure(t *testing.T) {
 func TestSinkStartFailureReports(t *testing.T) {
 	r := newRig(&Clip{PCM: pattern(4000)}, nil)
 	r.newSink = func() (*fakeSink, error) { return nil, errors.New("нет aplay") }
-	r.b.Start("a", "/system/vendor/quasar/sounds/common/timer.wav")
+	r.b.Start("a", "/system/vendor/quasar/sounds/common/timer.wav", true)
 	select {
 	case err := <-r.failed:
 		if !strings.Contains(err.Error(), "запуск вывода") || !strings.Contains(err.Error(), "нет aplay") {
@@ -208,7 +210,7 @@ func TestSinkStartFailureReports(t *testing.T) {
 func TestSinkDyingMidRingReports(t *testing.T) {
 	r := newRig(&Clip{PCM: pattern(20000)}, nil)
 	r.newSink = func() (*fakeSink, error) { return &fakeSink{failAt: 30000}, nil }
-	r.b.Start("a", "/system/vendor/quasar/sounds/common/timer.wav")
+	r.b.Start("a", "/system/vendor/quasar/sounds/common/timer.wav", true)
 	select {
 	case err := <-r.failed:
 		if !strings.Contains(err.Error(), "оборвался") { // звук уже шёл: автомат закончит звонок событием ENDED
@@ -230,7 +232,7 @@ func TestStopWhileStillDecodingStaysSilent(t *testing.T) {
 		<-gate
 		return &Clip{PCM: pattern(4000)}, nil
 	}
-	r.b.Start("a", "/system/vendor/quasar/sounds/common/timer.wav")
+	r.b.Start("a", "/system/vendor/quasar/sounds/common/timer.wav", true)
 	waitFor(t, "aplay поднят параллельно с раскодированием", func() bool {
 		r.mu.Lock()
 		defer r.mu.Unlock()
@@ -254,10 +256,10 @@ func TestSecondStartOfSameFileUsesTheCache(t *testing.T) {
 	if err := r.b.Preload(path); err != nil {
 		t.Fatal(err)
 	}
-	r.b.Start("a", path)
+	r.b.Start("a", path, true)
 	<-r.playing
 	r.b.Stop("a")
-	r.b.Start("b", path)
+	r.b.Start("b", path, true)
 	<-r.playing
 	r.b.Stop("b")
 	if n := r.decodes.Load(); n != 1 {
@@ -282,15 +284,15 @@ func TestCacheEvictsOldestAndSkipsHugeClips(t *testing.T) {
 
 func TestShutdownStopsEveryRingAndRefusesNewOnes(t *testing.T) {
 	r := newRig(&Clip{PCM: pattern(20000)}, nil)
-	r.b.Start("a", "/system/vendor/quasar/sounds/common/timer.wav")
-	r.b.Start("b", "/system/vendor/quasar/sounds/common/timer.wav")
+	r.b.Start("a", "/system/vendor/quasar/sounds/common/timer.wav", true)
+	r.b.Start("b", "/system/vendor/quasar/sounds/common/timer.wav", true)
 	<-r.playing
 	<-r.playing
 	r.b.Shutdown()
 	if !r.sink(0).aborted.Load() || !r.sink(1).aborted.Load() {
 		t.Fatal("после Shutdown (он синхронный) не все aplay остановлены")
 	}
-	r.b.Start("c", "/system/vendor/quasar/sounds/common/timer.wav")
+	r.b.Start("c", "/system/vendor/quasar/sounds/common/timer.wav", true)
 	time.Sleep(20 * time.Millisecond)
 	if r.decodes.Load() != 1 || len(r.sinks) != 2 {
 		t.Fatal("после Shutdown запущен новый звонок")
@@ -300,9 +302,9 @@ func TestShutdownStopsEveryRingAndRefusesNewOnes(t *testing.T) {
 func TestSameIDRestartReplacesTheOldRing(t *testing.T) {
 	r := newRig(&Clip{PCM: pattern(20000)}, nil)
 	path := "/system/vendor/quasar/sounds/common/timer.wav"
-	r.b.Start("a", path)
+	r.b.Start("a", path, true)
 	<-r.playing
-	r.b.Start("a", path)
+	r.b.Start("a", path, true)
 	<-r.playing
 	waitFor(t, "старый aplay остановлен", r.sink(0).aborted.Load)
 	if r.sink(1).aborted.Load() {
@@ -338,5 +340,44 @@ func TestValidPath(t *testing.T) {
 		if ValidPath(p) {
 			t.Errorf("ValidPath(%q) = true", p)
 		}
+	}
+}
+
+// Одноразовый системный звук играет файл один раз: весь звук ровно один раз, вывод доигрывается (не обрывается), конец —
+// FileEnded (не FileFailed). Позиция после конца — длительность файла, не ноль (у звонка она шла бы по кругу).
+func TestOnceSoundPlaysOnceAndReportsEnd(t *testing.T) {
+	pcm := pattern(20000)
+	r := newRig(&Clip{PCM: pcm, Bitrate: 80}, nil)
+	r.b.Start("o", "/system/vendor/quasar/sounds/common/spotter_start.mp3", false)
+	select {
+	case p := <-r.playing:
+		if p[0] != "o" || p[2] != uint64(80) {
+			t.Fatalf("OnPlaying = %v", p)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("нет OnPlaying")
+	}
+	select {
+	case id := <-r.ended:
+		if id != "o" {
+			t.Fatalf("FileEnded(%q)", id)
+		}
+	case err := <-r.failed:
+		t.Fatalf("конец одноразового звука — не ошибка: %v", err)
+	case <-time.After(3 * time.Second):
+		t.Fatal("нет FileEnded")
+	}
+	sk := r.sink(0)
+	if got := sk.bytes(); !bytes.Equal(got, pcm) {
+		t.Fatalf("сыграно %d байт, ждали ровно один проход (%d)", len(got), len(pcm))
+	}
+	if sk.aborted.Load() {
+		t.Fatal("доигранный звук не обрывают: aplay доигрывает остаток")
+	}
+	dur := uint64(20000 / bytesPerMs)
+	waitFor(t, "позиция после конца = длительность", func() bool { p := r.b.Pos("o"); return p >= dur-1 && p <= dur })
+	r.b.Stop("o") // release платформы после ENDED
+	if r.b.get("o") != nil {
+		t.Fatal("после Stop звук должен быть забыт")
 	}
 }

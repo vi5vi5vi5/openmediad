@@ -7,7 +7,6 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
-	"syscall"
 	"testing"
 	"time"
 )
@@ -81,7 +80,7 @@ func newFake(t *testing.T, mode string, max int) *fake {
 func (f *fake) start(mode string) *exec.Cmd {
 	cmd := exec.Command(f.sh(), f.guard, mode)
 	cmd.Env = f.env
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	detach(cmd)
 	if err := cmd.Start(); err != nil {
 		f.t.Fatal(err)
 	}
@@ -175,7 +174,7 @@ func TestGuardRemovesRuleWhenDaemonKilledAndRestarts(t *testing.T) {
 	f.waitFor("первый запуск", 3*time.Second, func() bool { return f.rules() == 1 && f.read("run/daemon.pid") != "" })
 	pid, _ := strconv.Atoi(f.read("run/daemon.pid"))
 	killed := time.Now()
-	syscall.Kill(pid, syscall.SIGKILL)
+	killHard(pid)
 	f.waitFor("правило снято после kill -9", 2*time.Second, func() bool { return f.rules() == 0 })
 	if d := time.Since(killed); d > 2*time.Second {
 		t.Errorf("правило снято через %v, норма ≤2 с", d)

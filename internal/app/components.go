@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"openmediad/internal/engine"
 	"openmediad/internal/journal"
 	"openmediad/internal/quasar/mediad"
 	"openmediad/internal/registry"
@@ -26,6 +27,8 @@ type (
 	shutdowner   interface{ Shutdown() }
 	fileAccepter interface{ Accepts(path string) bool }
 	debugStater  interface{ DebugState() any }
+	// arrivalNotifier — выход, который сообщает, что стал доступен (подключились наушники).
+	arrivalNotifier interface{ OnArrival(func()) }
 )
 
 // componentOn — включён ли компонент сборки в настройках.
@@ -90,7 +93,7 @@ func (d *daemon) startComponents(ctx context.Context) {
 			on = append(on, c.name)
 		}
 	}
-	d.j.Log(journal.Info, "system", fmt.Sprintf("компоненты: %v; музыка %v, голос %v, звонки %v", on, !d.m.NoMusic, d.m.Voice != nil, d.m.File != nil),
+	d.j.Log(journal.Info, "system", fmt.Sprintf("компоненты: %v; музыка %v, голос %v, звонки и системные звуки %v", on, !d.m.NoMusic, d.m.Voice != nil, d.m.File != nil),
 		"Что openmediad играет сам; всё остальное играет штатный mediad.", nil)
 }
 
@@ -105,6 +108,13 @@ func (d *daemon) attach(c *component) {
 		d.m.File = b
 		if a, ok := c.obj.(fileAccepter); ok {
 			d.m.FileOK = a.Accepts
+		}
+	}
+	if s, ok := c.obj.(Sink); ok { // выход звука (Bluetooth-наушники): маршруты [route] видят его по имени
+		d.rt.add(s)
+		if n, ok := c.obj.(arrivalNotifier); ok { // наушники подключились — звучащие потоки переходят в них
+			name := s.Name()
+			n.OnArrival(func() { d.eng.Reroute(func(c engine.Class) bool { return d.rt.better(c, name) }) })
 		}
 	}
 	if s, ok := c.obj.(shutdowner); ok {

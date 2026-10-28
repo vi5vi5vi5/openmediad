@@ -14,6 +14,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -119,6 +120,9 @@ type Engine struct {
 	OnSpectrum func(spectrum.Event)
 
 	gains [numClasses]atomic.Uint64 // громкость класса (биты float64); 0 — ещё не задана, то есть 1
+
+	mu   sync.Mutex
+	live map[*Stream]struct{} // потоки до Close (для Reroute)
 }
 
 func (e *Engine) now() time.Time {
@@ -167,5 +171,37 @@ func (e *Engine) NewStream(id string, c Class, src Source, opt Options, ev Event
 	if s.f.Rate == 0 || s.f.Channels == 0 {
 		panic(fmt.Sprintf("engine: источник %s без формата", id))
 	}
+	e.mu.Lock()
+	if e.live == nil {
+		e.live = map[*Stream]struct{}{}
+	}
+	e.live[s] = struct{}{}
+	e.mu.Unlock()
 	return s
+}
+
+func (e *Engine) forget(s *Stream) {
+	e.mu.Lock()
+	delete(e.live, s)
+	e.mu.Unlock()
+}
+
+// Reroute заново выбирает выход играющим потокам тех классов, для которых match вернул true: появился выход лучше
+// нынешнего (подключились наушники — музыка уходит в них посреди трека). Возвращает, сколько потоков переведено.
+func (e *Engine) Reroute(match func(Class) bool) int {
+	e.mu.Lock()
+	var list []*Stream
+	for s := range e.live {
+		if match(s.class) {
+			list = append(list, s)
+		}
+	}
+	e.mu.Unlock()
+	n := 0
+	for _, s := range list {
+		if s.Reroute() {
+			n++
+		}
+	}
+	return n
 }

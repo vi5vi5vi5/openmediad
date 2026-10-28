@@ -3,6 +3,7 @@ package app
 import (
 	"fmt"
 	"strings"
+	"sync"
 	"sync/atomic"
 
 	"openmediad/internal/audio"
@@ -17,10 +18,26 @@ type Sink interface {
 	Open(f audio.Format) (audio.Output, error)
 }
 
-// router выбирает выход для класса по настройке [route]: первый доступный из списка. Маршруты меняются на ходу (reload).
+// router выбирает выход для класса по настройке [route]: первый доступный из списка. Маршруты меняются на ходу (reload);
+// выходы компонентов (Bluetooth) добавляются при запуске компонентов.
 type router struct {
+	mu     sync.RWMutex
 	sinks  map[string]Sink
 	routes atomic.Pointer[config.Route]
+}
+
+// add подключает выход компонента.
+func (rt *router) add(s Sink) {
+	rt.mu.Lock()
+	rt.sinks[s.Name()] = s
+	rt.mu.Unlock()
+}
+
+func (rt *router) sink(name string) (Sink, bool) {
+	rt.mu.RLock()
+	defer rt.mu.RUnlock()
+	s, ok := rt.sinks[name]
+	return s, ok
 }
 
 func newRouter(r config.Route, sinks ...Sink) *router {
@@ -45,11 +62,25 @@ func (rt *router) list(c engine.Class) []string {
 	return r.Music
 }
 
+// better — выход name (только что ставший доступным) стоит в маршруте класса раньше любого другого доступного выхода:
+// звучащие потоки класса стоит перевести в него.
+func (rt *router) better(c engine.Class, name string) bool {
+	for _, n := range rt.list(c) {
+		if n == name {
+			return true
+		}
+		if s, ok := rt.sink(n); ok && s.Available() {
+			return false
+		}
+	}
+	return false
+}
+
 // Output открывает первый доступный выход класса; если ни один не открылся — ошибка со всеми причинами.
 func (rt *router) Output(c engine.Class, f audio.Format) (audio.Output, error) {
 	var errs []string
 	for _, name := range rt.list(c) {
-		s, ok := rt.sinks[name]
+		s, ok := rt.sink(name)
 		if !ok {
 			continue
 		}

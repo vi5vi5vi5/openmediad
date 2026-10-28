@@ -3,13 +3,16 @@ package sounds
 import (
 	"context"
 	"fmt"
+	"io"
 	"sync"
 
 	"openmediad/internal/audio"
 )
 
-// Source — звонок: файл, который играет по кругу без разрыва, пока поток не закроют.
+// Source — звонок: файл, который играет по кругу без разрыва, пока поток не закроют; с Once — один раз.
 type Source struct {
+	Once bool // сыграть файл один раз и закончить (io.EOF): одноразовый системный звук
+
 	lib  *Library
 	path string
 
@@ -36,13 +39,16 @@ func (s *Source) Open(context.Context) (audio.Info, error) {
 	return audio.Info{Duration: c.Duration(), Bitrate: int(c.Bitrate)}, nil
 }
 
-// Read отдаёт звук по кругу: после конца файла — снова с начала.
+// Read отдаёт звук по кругу: после конца файла — снова с начала. С Once после конца файла — io.EOF.
 func (s *Source) Read(p []byte) (int, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	pcm := s.clip.PCM
+	if s.Once && s.off == len(pcm) {
+		return 0, io.EOF
+	}
 	n := copy(p, pcm[s.off:])
-	if s.off += n; s.off == len(pcm) {
+	if s.off += n; s.off == len(pcm) && !s.Once {
 		s.off = 0
 	}
 	return n, nil

@@ -22,8 +22,12 @@ type fakeFile struct {
 }
 
 func (f *fakeFile) rec(s string) { f.mu.Lock(); f.calls = append(f.calls, s); f.mu.Unlock() }
-func (f *fakeFile) Start(id, path string) {
-	f.rec("start " + id + " " + path)
+func (f *fakeFile) Start(id, path string, loop bool) {
+	if loop {
+		f.rec("start " + id + " " + path)
+	} else {
+		f.rec("once " + id + " " + path)
+	}
 }
 func (f *fakeFile) Stop(id string) { f.rec("stop " + id) }
 func (f *fakeFile) Pos(string) uint64 {
@@ -129,8 +133,67 @@ func fileRuleViolation(sn PlainSnap, first bool) string {
 	return ""
 }
 
-func fileKinds(r *rig) (out []string) {
-	for _, g := range r.events() {
+// fileOnceRuleViolation — поля событий одноразового звука (50:1) по записям 28.10.2026 (TestFileOnceEventsMatchRecordings):
+// у PLAYING ещё нет ни длительности, ни монотонного времени; progress один, с позицией 0; битрейт — как узнали.
+func fileOnceRuleViolation(sn PlainSnap) string {
+	k, st := sn.Kind, sn.State
+	switch {
+	case k == 1 && (st == 1 || st == 3): // STARTING и PLAYING
+		if sn.Has6 || sn.Mono != 0 || sn.HasT9 || sn.HasT17 || sn.Bitrate != 0 || sn.HasPlayed || sn.Stop != 0 {
+			return fmt.Sprintf("state/%v: лишние поля", st)
+		}
+	case k == 2 && st == 3:
+		if !sn.Has6 || sn.Mono == 0 || !sn.HasT9 || sn.HasT17 || sn.Stop != 0 {
+			return "progress/PLAYING: базовые поля"
+		}
+	case k == 6 && st == 3:
+		if !sn.Has6 || sn.Mono == 0 || sn.HasT9 || !sn.HasT17 || !sn.T17 || sn.HasPlayed || sn.Stop != 0 {
+			return "flag/PLAYING"
+		}
+	case k == 1 && st == 5:
+		if !sn.Has6 || sn.Mono == 0 || sn.HasT9 || sn.HasT17 || sn.Stop == 0 {
+			return "state/ENDED"
+		}
+	case k == 6 && st == 5: // flag уже после ENDED: у mediad под нагрузкой (8 звуков разом); автомат его не шлёт
+		if !sn.Has6 || sn.Mono == 0 || sn.HasT9 || !sn.HasT17 || sn.Stop == 0 {
+			return "flag/ENDED"
+		}
+	default:
+		return fmt.Sprintf("неожиданное событие %v/%v", k, st)
+	}
+	return ""
+}
+
+// uuidRuleViolation — mediad даёт STARTING свой uuid (поле 3.22), а все следующие события плеера файлов несут один общий.
+// evs — события одного плеера по порядку, без diag (у него дескриптора нет).
+func uuidRuleViolation(evs [][]byte) string {
+	var starting, common string
+	for i, ev := range evs {
+		e := msg.AudioEvent(ev)
+		d, _ := pb.Bytes(ev, 3)
+		u, _ := pb.Str(d, 22)
+		switch {
+		case e.Kind() == 1 && e.State() == 1:
+			if i > 0 {
+				return "STARTING не первым"
+			}
+			starting = u
+		case common == "":
+			if u == starting {
+				return "uuid после STARTING совпал с его uuid"
+			}
+			common = u
+		case u != common:
+			return fmt.Sprintf("событие %d (%v/%v): uuid сменился", i, e.Kind(), e.State())
+		}
+	}
+	return ""
+}
+
+func fileKinds(r *rig) []string { return kindsOf(r.events()) }
+
+func kindsOf(evs []got) (out []string) {
+	for _, g := range evs {
 		out = append(out, g.kind().String()+"/"+g.state().String())
 	}
 	return
@@ -161,16 +224,33 @@ func TestFileRingSequenceTimingsAndFieldRules(t *testing.T) {
 	if !r.m.Handle(nil, fileReleaseCmd("f1")) {
 		t.Fatal("release звонка обрабатывается машиной")
 	}
-	want := []string{"state/STARTING", "progress/STARTING", "state/PLAYING", "progress/PLAYING", "flag/PLAYING", "progress/PLAYING", "progress/PLAYING", "state/ENDED"}
+	want := []string{"state/STARTING", "progress/STARTING", "state/PLAYING", "progress/PLAYING", "diag/PLAYING", "flag/PLAYING", "progress/PLAYING", "progress/PLAYING", "state/ENDED"}
 	if got := fileKinds(r); fmt.Sprint(got) != fmt.Sprint(want) {
 		t.Fatalf("события %v, ждали %v", got, want)
 	}
-	ev := r.events()
+	all := r.events()
+	if !bytes.Equal(all[4].body, PlainMetaFrom(fileStartCmd("f1", timerWav)).Diag(plainSnapFrom(all[4].body))) {
+		t.Fatal("diag собран не сборщиком Diag")
+	}
+	if p := plainSnapFrom(all[4].body); p.Bitrate != 64 {
+		t.Fatalf("diag без битрейта: %+v", p)
+	}
+	var ev []got // без diag: у него нет ни дескриптора, ни позиции
+	var bodies [][]byte
+	for _, g := range all {
+		if g.kind() != 5 {
+			ev = append(ev, g)
+			bodies = append(bodies, g.body)
+		}
+	}
+	if v := uuidRuleViolation(bodies); v != "" {
+		t.Fatal(v)
+	}
 	if ev[0].at != 25*time.Millisecond {
 		t.Fatalf("STARTING в %v, ждали +25 мс", ev[0].at)
 	}
-	if ev[1].at != 90*time.Millisecond || ev[2].at != 90*time.Millisecond || ev[3].at != 90*time.Millisecond {
-		t.Fatalf("progress(STARTING), PLAYING и первый progress должны идти в момент первого звука: %v %v %v", ev[1].at, ev[2].at, ev[3].at)
+	if ev[1].at != 90*time.Millisecond || ev[2].at != 90*time.Millisecond || ev[3].at != 90*time.Millisecond || all[4].at != 90*time.Millisecond {
+		t.Fatalf("progress(STARTING), PLAYING, первый progress и diag должны идти в момент первого звука: %v %v %v %v", ev[1].at, ev[2].at, ev[3].at, all[4].at)
 	}
 	if d := ev[4].at - ev[2].at; d != 240*time.Millisecond {
 		t.Fatalf("flag через %v после PLAYING, ждали 240 мс", d)
@@ -427,36 +507,179 @@ func TestFileOutsideSystemSoundsGoesToMediad(t *testing.T) {
 	}
 }
 
-// Звук после «Алиса» и щелчок громкости играют один раз, и конец сообщает сам плеер: release платформа не присылает. Шим,
-// игравший их по кругу «до release», зациклил звук на колонке (проверка на слух 28.10.2026): теперь такие звуки играет mediad.
-func TestFileOneShotSoundsStayWithMediad(t *testing.T) {
+const spotterStart = "/system/vendor/quasar/sounds/common/spotter_start.mp3"
+
+// oneShotEvents — события без diag и сами diag отдельно.
+func oneShotEvents(r *rig) (ev []got, diag []got) {
+	for _, g := range r.events() {
+		if g.kind() == 5 {
+			diag = append(diag, g)
+		} else {
+			ev = append(ev, g)
+		}
+	}
+	return
+}
+
+// Звук после «Алиса» играет один раз, и конец сообщает сам плеер: release платформа присылает только после ENDED. Порядок
+// и поля событий — как у mediad в записях 28.10.2026 (BUS-PROTOCOL.md, §2.6).
+func TestFileOneShotPlaysOnceAndEndsByItself(t *testing.T) {
 	r, ff := newFileRig(t)
-	var notes []string
-	r.m.Note = func(kind, id, detail string) { notes = append(notes, kind+" "+id+" "+detail) }
-	for i, p := range []string{
-		"/system/vendor/quasar/sounds/common/spotter_start.mp3",
-		"/system/vendor/quasar/sounds/common/volume_sound.mp3",
-	} {
-		id := fmt.Sprintf("o%d", i)
-		if r.m.Handle(nil, fileOnceCmd(id, p)) {
-			t.Fatalf("%s: одноразовый звук должен идти mediad", p)
+	start := fileOnceCmd("o1", spotterStart)
+	if !r.m.Handle(nil, start) {
+		t.Fatal("одноразовый звук теперь играет шим")
+	}
+	if !ff.has("once o1 " + spotterStart) {
+		t.Fatalf("бэкенд должен играть файл один раз: %v", ff.calls)
+	}
+	r.advance(30 * time.Millisecond)
+	r.m.FilePlaying("o1", 576, 80) // 0,58 с, средний битрейт 80
+	r.advance(300 * time.Millisecond)
+	ff.set(576, 576)
+	r.m.FileEnded("o1")
+	ev, diag := oneShotEvents(r)
+	want := []string{"state/STARTING", "state/PLAYING", "progress/PLAYING", "flag/PLAYING", "state/ENDED"}
+	if got := kindsOf(ev); fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Fatalf("события %v, ждали %v", got, want)
+	}
+	if len(diag) != 1 || diag[0].at != ev[2].at {
+		t.Fatalf("diag с битрейтом должен идти один раз, сразу за первым progress: %d", len(diag))
+	}
+	if p := plainSnapFrom(diag[0].body); p.Bitrate != 80 || !bytes.Equal(diag[0].body, PlainMetaFrom(start).Diag(p)) {
+		t.Fatalf("diag: %+v", p)
+	}
+	if d := ev[3].at - ev[1].at; d != 210*time.Millisecond {
+		t.Fatalf("flag через %v после PLAYING, ждали 210 мс", d)
+	}
+	var bodies [][]byte
+	for i, g := range ev {
+		bodies = append(bodies, g.body)
+		sn := plainSnapFrom(g.body)
+		if v := fileOnceRuleViolation(sn); v != "" {
+			t.Errorf("событие %d: %s", i, v)
 		}
-		if r.m.Handle(nil, fileReleaseCmd(id)) {
-			t.Fatalf("%s: release одноразового плеера идёт mediad", p)
+		if sn.PosMs != 0 || (sn.Has6 && sn.Dur6 != 0) {
+			t.Errorf("событие %d: позиция %d мс, длительность %d с; ждали 0 и 0 (0,58 с — целых секунд нет)", i, sn.PosMs, sn.Dur6)
+		}
+		if g.kind() != 1 || g.state() != 1 {
+			if (g.kind() == 6 || g.state() == 5) && sn.Bitrate != 80 {
+				t.Errorf("событие %d (%v/%v): нет битрейта", i, g.kind(), g.state())
+			}
 		}
 	}
-	r.advance(5 * time.Second)
-	if ff.count() != 0 {
-		t.Fatalf("бэкенд не должен играть одноразовые звуки: %v", ff.calls)
+	if v := uuidRuleViolation(bodies); v != "" {
+		t.Fatal(v)
 	}
-	if n := len(r.events()); n != 0 {
-		t.Fatalf("шим не должен выпускать события чужого плеера: %d", n)
+	if len(r.fwd) != 0 {
+		t.Fatal("mediad ничего не получает")
 	}
-	if len(notes) != 2 || notes[0][:9] != "file-once" {
-		t.Fatalf("в журнал должны попасть оба звука: %v", notes)
+	n := len(r.events())
+	if !r.m.Handle(nil, fileReleaseCmd("o1")) {
+		t.Fatal("release после ENDED — наш: он не должен уйти mediad")
 	}
-	if !r.m.Handle(nil, fileStartCmd("ring", timerWav)) { // звонок рядом по-прежнему берёт шим
-		t.Fatal("звонок таймера (50:0) должен играть шим")
+	if len(r.events()) != n {
+		t.Fatal("release после ENDED не порождает событий")
+	}
+	if s := r.m.Snapshot(); len(s) != 0 {
+		t.Fatalf("после release плеер забыт: %+v", s)
+	}
+}
+
+// Щелчок громкости (0,1 с) кончается раньше, чем пришло бы время flag; битрейта у файла без заголовка Xing нет — нет и diag.
+func TestFileOneShotShortSoundHasNoFlagAndNoDiag(t *testing.T) {
+	r, _ := newFileRig(t)
+	r.m.Handle(nil, fileOnceCmd("v", "/system/vendor/quasar/sounds/common/volume_sound.mp3"))
+	r.advance(30 * time.Millisecond)
+	r.m.FilePlaying("v", 104, 0)
+	r.advance(130 * time.Millisecond)
+	r.m.FileEnded("v")
+	r.advance(2 * time.Second)
+	want := []string{"state/STARTING", "state/PLAYING", "progress/PLAYING", "state/ENDED"}
+	if got := fileKinds(r); fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Fatalf("события %v, ждали %v", got, want)
+	}
+	for _, g := range r.events() {
+		if v := fileOnceRuleViolation(plainSnapFrom(g.body)); v != "" {
+			t.Errorf("%v/%v: %s", g.kind(), g.state(), v)
+		}
+	}
+}
+
+// Release раньше конца звука (платформа передумала) обрывает звук и сразу даёт ENDED, как у звонка.
+func TestFileOneShotReleaseBeforeEndStopsIt(t *testing.T) {
+	r, ff := newFileRig(t)
+	r.m.Handle(nil, fileOnceCmd("o", spotterStart))
+	r.advance(30 * time.Millisecond)
+	r.m.FilePlaying("o", 576, 80)
+	r.advance(100 * time.Millisecond)
+	if !r.m.Handle(nil, fileReleaseCmd("o")) || !ff.has("stop o") {
+		t.Fatal("release обрывает звук")
+	}
+	k := fileKinds(r)
+	if k[len(k)-1] != "state/ENDED" {
+		t.Fatalf("события %v", k)
+	}
+	n := len(r.events())
+	r.m.FileEnded("o") // поздний конец звука после release
+	r.advance(time.Second)
+	if len(r.events()) != n {
+		t.Fatal("второго ENDED быть не должно")
+	}
+}
+
+// Не зазвучал за 3 с — звук играет mediad (откат), как у звонка; release тоже идёт ему.
+func TestFileOneShotFailureForwardsToMediad(t *testing.T) {
+	r, _ := newFileRig(t)
+	start := fileOnceCmd("o", spotterStart)
+	r.m.Handle("ctx", start)
+	r.advance(3100 * time.Millisecond)
+	if len(r.fwd) != 1 || !bytes.Equal(r.fwd[0], start) {
+		t.Fatal("стартовая команда должна уйти mediad")
+	}
+	if r.m.Handle(nil, fileReleaseCmd("o")) {
+		t.Fatal("release отданного звука идёт mediad")
+	}
+}
+
+// ENDED ушёл, а release так и не пришёл: плеер не висит вечно.
+func TestFileOneShotForgottenWithoutRelease(t *testing.T) {
+	r, _ := newFileRig(t)
+	r.m.Handle(nil, fileOnceCmd("o", spotterStart))
+	r.advance(30 * time.Millisecond)
+	r.m.FilePlaying("o", 576, 80)
+	r.advance(600 * time.Millisecond)
+	r.m.FileEnded("o")
+	if s := r.m.Snapshot(); len(s) != 1 || s[0].State != "системный звук: доиграл" {
+		t.Fatalf("до release плеер ждёт его: %+v", s)
+	}
+	r.advance(31 * time.Second)
+	if s := r.m.Snapshot(); len(s) != 0 {
+		t.Fatalf("без release плеер забыт через 30 с: %+v", s)
+	}
+}
+
+// Остановка шима: звучащий одноразовый звук не повторяется у mediad (он короткий и уже звучал), платформа получает ENDED;
+// звонок рядом по-прежнему передаётся mediad.
+func TestHandoffEndsPlayingOneShotAndForwardsRing(t *testing.T) {
+	r, ff := newFileRig(t)
+	ring := fileStartCmd("ring", timerWav)
+	r.m.Handle("ctx", ring)
+	r.m.Handle("ctx", fileOnceCmd("o", spotterStart))
+	r.advance(30 * time.Millisecond)
+	r.m.FilePlaying("ring", 9273, 64)
+	r.m.FilePlaying("o", 576, 80)
+	r.advance(100 * time.Millisecond)
+	before := len(r.events())
+	r.m.Handoff()
+	if !ff.has("stop o") || !ff.has("stop ring") {
+		t.Fatalf("оба звука остановлены: %v", ff.calls)
+	}
+	if len(r.fwd) != 1 || !bytes.Equal(r.fwd[0], ring) {
+		t.Fatal("mediad получает только звонок")
+	}
+	evs := r.events()[before:]
+	if len(evs) != 1 || evs[0].player() != "o" || evs[0].state() != 5 {
+		t.Fatalf("после передачи — только ENDED одноразового звука: %d событий", len(evs))
 	}
 }
 
@@ -491,6 +714,25 @@ func TestHandoffForwardsActiveRingToMediad(t *testing.T) {
 	}
 	if r.m.Handle(nil, fileReleaseCmd("f1")) {
 		t.Fatal("после передачи release этого звонка идёт mediad")
+	}
+}
+
+// Звонок оборвался посреди звучания (платформа получила ENDED), release ещё не пришёл, и тут демон останавливается: mediad
+// не должен получить стартовую команду — он зазвонил бы заново.
+func TestHandoffSkipsEndedRing(t *testing.T) {
+	r, _ := newFileRig(t)
+	r.m.Handle("ctx", fileStartCmd("f1", timerWav))
+	r.advance(50 * time.Millisecond)
+	r.m.FilePlaying("f1", 9273, 64)
+	r.advance(500 * time.Millisecond)
+	r.m.FileFailed("f1", errors.New("aplay умер"))
+	n := len(r.events())
+	r.m.Handoff()
+	if len(r.fwd) != 0 {
+		t.Fatal("законченный звонок не передаётся mediad")
+	}
+	if len(r.events()) != n {
+		t.Fatal("второго ENDED быть не должно")
 	}
 }
 

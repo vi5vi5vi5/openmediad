@@ -279,7 +279,7 @@ func (in *Installer) planInit(m *Manifest, text []byte) (created bool, err error
 // planLink решает, создавать ли ссылку /usr/bin/openmediad: чужой файл с этим именем не трогается.
 func (in *Installer) planLink(m *Manifest) (create bool, skip string) {
 	path := layout.Root + LinkPath
-	if target, err := os.Readlink(path); err == nil {
+	if target, err := readLink(path); err == nil {
 		if target == deviceBin {
 			if m.entry(LinkPath) == nil {
 				m.Files = append(m.Files, Entry{Path: LinkPath, Link: deviceBin})
@@ -401,4 +401,11 @@ func copyFile(src, dst string, mode os.FileMode) error {
 	}
 	os.Chmod(tmp, mode)
 	return os.Rename(tmp, dst)
+}
+
+// readLink — цель символической ссылки с прямыми слэшами. На колонке она такая и есть; Windows (тесты на компьютере)
+// отдаёт цель с обратными слэшами, и сравнение со своей ссылкой не сходилось бы.
+func readLink(path string) (string, error) {
+	t, err := os.Readlink(path)
+	return filepath.ToSlash(t), err
 }

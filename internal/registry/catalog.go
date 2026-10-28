@@ -46,7 +46,7 @@ var Catalog = []Info{
 	{Name: "spectrum", Section: "spectrum", Kind: Service, Summary: "спектр звука для дисплея и подсветки (iohub)", Default: true, Ready: true},
 	{Name: "debug", Section: "debug", Kind: Service, Summary: "отладочный веб-порт с журналом (только чтение)", Default: true, Ready: true},
 	{Name: "pprof", Kind: Service, Summary: "профилировщик Go в отладочном порту (для разработки)", Ready: true},
-	{Name: "bluetooth", Section: "sink.bluetooth", Kind: Sink, Summary: "Bluetooth-наушники", Default: true, Phase: 6},
+	{Name: "bluetooth", Section: "sink.bluetooth", Kind: Sink, Summary: "Bluetooth-наушники (опытный: с наушниками не проверен)", Ready: true},
 	{Name: "netout", Section: "sink.netout", Kind: Sink, Summary: "звук в сеть для других программ", Phase: 7},
 	{Name: "radio", Section: "source.radio", Kind: Source, Summary: "интернет-радио и HTTP-потоки", Phase: 8},
 	{Name: "spotify", Section: "source.spotify", Kind: Source, Summary: "Spotify (librespot)", Phase: 9},

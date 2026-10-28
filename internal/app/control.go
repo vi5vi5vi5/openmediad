@@ -29,8 +29,9 @@ type Status struct {
 	LogLevel    string            `json:"log_level"`
 	HeapKB      uint64            `json:"heap_kb"`
 	Goroutines  int               `json:"goroutines"`
-	Players     any               `json:"players,omitempty"` // с Detail
-	Tracks      any               `json:"tracks,omitempty"`  // с Detail
+	Players     any               `json:"players,omitempty"`   // с Detail
+	Tracks      any               `json:"tracks,omitempty"`    // с Detail
+	Bluetooth   any               `json:"bluetooth,omitempty"` // выход в наушники (если компонент работает)
 }
 
 // ComponentStatus — компонент сборки в демоне.
@@ -56,13 +57,18 @@ func (d *daemon) status(detail bool) Status {
 		return st
 	}
 	st.Music, st.Voice, st.Sounds = !d.m.NoMusic, d.m.Voice != nil, d.m.File != nil
+	for _, c := range comps {
+		s, ok := c.obj.(debugStater)
+		switch {
+		case !ok:
+		case c.name == "bluetooth":
+			st.Bluetooth = s.DebugState()
+		case detail:
+			st.Tracks = s.DebugState()
+		}
+	}
 	if detail {
 		st.Players = d.m.Snapshot()
-		for _, c := range comps {
-			if s, ok := c.obj.(debugStater); ok {
-				st.Tracks = s.DebugState()
-			}
-		}
 	}
 	return st
 }
@@ -79,7 +85,7 @@ func (d *daemon) debugState() any {
 		own = append(own, "голос Алисы")
 	}
 	if st.Sounds {
-		own = append(own, "звонки")
+		own = append(own, "звонки и системные звуки")
 	}
 	if len(own) == 0 {
 		mode = "прозрачный посредник: всё играет штатный mediad"
@@ -91,6 +97,7 @@ func (d *daemon) debugState() any {
 		"connections": st.Connections,
 		"players":     st.Players,
 		"engine":      map[string]any{"треки": st.Tracks},
+		"bluetooth":   st.Bluetooth,
 	}
 }
 

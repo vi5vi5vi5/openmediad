@@ -125,6 +125,26 @@ func (s *Stream) Play() {
 	go s.loop(gen, prev, done)
 }
 
+// Reroute перезапускает вывод играющего потока: новый цикл заново выбирает выход маршрута. Как пауза и продолжение
+// подряд, только без событий: не прозвучавшее в старом выводе возвращается источнику (Options.RewindOnPause), и звук
+// продолжается в новом выходе с того места, где старый замолчал. false — поток не играет.
+func (s *Stream) Reroute() bool {
+	s.mu.Lock()
+	if s.closed || !s.playing {
+		s.mu.Unlock()
+		return false
+	}
+	s.bump()
+	gen, prev, out := s.gen, s.loopDone, s.out
+	done := make(chan struct{})
+	s.loopDone = done
+	s.mu.Unlock()
+	s.interrupt(out)
+	s.e.logf("поток %s: выход маршрута %s выбирается заново (появился выход лучше)", s.id, s.class)
+	go s.loop(gen, prev, done)
+	return true
+}
+
 // Pause останавливает вывод сразу; источник, буфер и позиция остаются. Звук, записанный в вывод, но не прозвучавший,
 // возвращается источнику (Options.RewindOnPause), и «продолжи» идёт с того места, где динамик замолчал.
 func (s *Stream) Pause() {
@@ -151,6 +171,7 @@ func (s *Stream) Close() {
 	s.bump()
 	out := s.out
 	s.mu.Unlock()
+	s.e.forget(s)
 	s.cancel()
 	s.interrupt(out)
 	s.src.Close()

@@ -65,7 +65,7 @@ func printStatus(c *Ctx, st app.Status, verbose bool) {
 		own = append(own, "голос Алисы")
 	}
 	if st.Sounds {
-		own = append(own, "звонки")
+		own = append(own, "звонки и системные звуки")
 	}
 	if len(own) == 0 {
 		c.printf("играет сам: ничего — прозрачный посредник, всё играет штатный mediad\n")
@@ -90,6 +90,9 @@ func printStatus(c *Ctx, st app.Status, verbose bool) {
 		}
 	}
 	c.printf("компоненты: %s\n", listOrNone(comps))
+	if line := bluetoothLine(st.Bluetooth); line != "" {
+		c.printf("наушники:   %s\n", line)
+	}
 	c.printf("журнал:     уровень %s (openmediad logs)\n", st.LogLevel)
 	for _, w := range st.Warnings {
 		c.printf("внимание:   %s\n", w)
@@ -98,6 +101,37 @@ func printStatus(c *Ctx, st app.Status, verbose bool) {
 		printJSON(c, "плееры", st.Players)
 		printJSON(c, "треки", st.Tracks)
 	}
+}
+
+// bluetoothLine — состояние выхода в наушники из ответа демона (JSON: см. sink/bluetooth.State); пусто — компонента нет.
+func bluetoothLine(v any) string {
+	m, ok := v.(map[string]any)
+	if !ok {
+		return ""
+	}
+	str := func(k string) string { s, _ := m[k].(string); return s }
+	if b, _ := m["bus"].(bool); !b {
+		return "Bluetooth недоступен (нет связи с BlueZ)"
+	}
+	if c, _ := m["connected"].(bool); !c {
+		if w := str("want"); w != "" {
+			return "не подключены (выбраны " + w + "); звук идёт по следующему выходу маршрута"
+		}
+		return "не подключены; звук идёт по следующему выходу маршрута"
+	}
+	s := fmt.Sprintf("%s (%s) подключены", str("name"), str("device"))
+	if vol, _ := m["volume_127"].(float64); vol >= 0 {
+		s += fmt.Sprintf(", громкость %d/127 за колонкой", int(vol))
+	}
+	if ch, _ := m["channel"].(bool); !ch {
+		return s + "; канал в наушники не открыт"
+	}
+	n, _ := m["streams"].(float64)
+	s += fmt.Sprintf("; канал открыт, потоков %d", int(n))
+	if b, _ := m["buttons"].(bool); b {
+		s += "; кнопки наушников работают"
+	}
+	return s
 }
 
 // memoryLine — Pss демона и его потомков (aplay, maind --gst-launch): сколько движок на самом деле стоит колонке.

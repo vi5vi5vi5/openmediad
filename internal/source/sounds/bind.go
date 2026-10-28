@@ -10,13 +10,14 @@ import (
 	"openmediad/internal/quasar/mediad"
 )
 
-// Привязка к эмуляции mediad: Backend реализует mediad.FileBackend — звонок (старт плеера вида 4 с путём к файлу) становится
-// потоком движка класса alert. Звонков может быть несколько одновременно (таймер и будильник): у каждого свой вывод,
-// смешивает их смеситель колонки.
+// Привязка к эмуляции mediad: Backend реализует mediad.FileBackend — звонок или системный звук (старт плеера вида 4 с путём
+// к файлу) становится потоком движка класса alert. Звуков может быть несколько одновременно (таймер, будильник, щелчок
+// громкости): у каждого свой вывод, смешивает их смеситель колонки.
 
 // FileEvents — куда Backend сообщает о результатах (это mediad.Machine).
 type FileEvents interface {
 	FilePlaying(id string, durMs, bitrate uint64)
+	FileEnded(id string) // одноразовый звук доиграл до конца
 	FileFailed(id string, err error)
 }
 
@@ -34,6 +35,7 @@ type Backend struct {
 type ring struct {
 	st   *engine.Stream
 	info audio.Info
+	loop bool
 }
 
 var _ mediad.FileBackend = (*Backend)(nil)
@@ -65,17 +67,19 @@ func (b *Backend) forget(id string, r *ring) {
 	b.mu.Unlock()
 }
 
-// Start начинает звонок: вывод поднимается параллельно с раскодированием, потом звук идёт по кругу до Stop. Путь должен быть
-// из ValidPath (это проверяет автомат mediad).
-func (b *Backend) Start(id, path string) {
+// Start начинает звук: вывод поднимается параллельно с раскодированием, потом звук идёт по кругу до Stop (loop) или один
+// раз, и тогда его конец сообщает FileEnded. Путь должен быть из ValidPath (это проверяет автомат mediad).
+func (b *Backend) Start(id, path string, loop bool) {
 	lib := b.lib()
 	b.mu.Lock()
 	if b.closed {
 		b.mu.Unlock()
 		return
 	}
-	r := &ring{}
-	r.st = b.Engine.NewStream(id, engine.Alert, NewSource(lib, path), engine.Options{Spectrum: engine.NoSpectrum, Endless: true}, engine.Events{
+	r := &ring{loop: loop}
+	src := NewSource(lib, path)
+	src.Once = !loop
+	r.st = b.Engine.NewStream(id, engine.Alert, src, engine.Options{Spectrum: engine.NoSpectrum, Endless: loop}, engine.Events{
 		Ready: func(i audio.Info) {
 			b.mu.Lock()
 			r.info = i
@@ -91,8 +95,12 @@ func (b *Backend) Start(id, path string) {
 			b.forget(id, r)
 			b.Events.FileFailed(id, err)
 		},
-		Ended: func() { // звук оборвался, когда уже шёл (вывод умер): автомат закончит звонок
-			b.forget(id, r)
+		Ended: func() {
+			if !loop { // одноразовый звук доиграл; поток остаётся до Stop, чтобы Elapsed показывал, сколько он звучал
+				b.Events.FileEnded(id)
+				return
+			}
+			b.forget(id, r) // звонок оборвался, когда уже шёл (вывод умер): автомат закончит его
 			b.Events.FileFailed(id, errors.New("звук звонка оборвался"))
 		},
 	})
@@ -127,7 +135,7 @@ func (b *Backend) Elapsed(id string) uint64 {
 	return 0
 }
 
-// Pos — позиция внутри текущего прохода файла, мс (после конца файла отсчёт идёт заново).
+// Pos — позиция внутри текущего прохода файла, мс (у звонка после конца файла отсчёт идёт заново).
 func (b *Backend) Pos(id string) uint64 {
 	r := b.get(id)
 	if r == nil {
@@ -136,6 +144,9 @@ func (b *Backend) Pos(id string) uint64 {
 	b.mu.Lock()
 	dur := r.info.Duration
 	b.mu.Unlock()
+	if !r.loop {
+		return uint64(r.st.Elapsed() / time.Millisecond) // движок не пускает позицию дальше длительности
+	}
 	if dur <= 0 {
 		return 0
 	}

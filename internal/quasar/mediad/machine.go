@@ -224,7 +224,8 @@ func (m *Machine) Handoff() {
 		vids = append(vids, id)
 		m.note("handoff", id, "шим останавливается: ответ Алисы прерван")
 	}
-	fhs := m.handoffFiles()
+	fhs, fstop, fevs := m.handoffFiles()
+	evs = append(evs, fevs...)
 	m.mu.Unlock()
 	for _, id := range ids {
 		m.Back.Pause(id)
@@ -232,7 +233,7 @@ func (m *Machine) Handoff() {
 	for _, id := range vids {
 		m.Voice.Abort(id)
 	}
-	m.handoffFilesDone(fhs)
+	m.handoffFilesDone(fhs, fstop)
 	for _, e := range evs {
 		m.Emit(e)
 	}

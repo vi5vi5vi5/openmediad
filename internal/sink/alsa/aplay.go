@@ -40,6 +40,10 @@ type Config struct {
 	// добавляет ≈100 мс к старту, но даёт запас на дрожание (0 underrun). >0: старт после стольких микросекунд
 	// данных (1 — сразу), но без запаса поток реального времени даёт underrun (замер: 5–8 за 1 с).
 	StartDelayUS int
+
+	// PipeBytes — размер трубы к aplay (0 — как у системы, 64 КБ ≈ 0,34 с стерео). Для вывода, который пишется без
+	// остановки (смеситель наушников), полная труба — это постоянная задержка звука; маленькая (4 КБ ≈ 21 мс) её убирает.
+	PipeBytes int
 }
 
 func (c Config) withDefaults() Config {
@@ -93,6 +97,9 @@ func Start(cfg Config) (*Player, error) {
 	in, err := p.cmd.StdinPipe()
 	if err != nil {
 		return nil, err
+	}
+	if cfg.PipeBytes > 0 {
+		setPipeSize(in, cfg.PipeBytes)
 	}
 	p.in = in
 	if err := p.cmd.Start(); err != nil {

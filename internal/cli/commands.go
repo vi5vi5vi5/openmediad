@@ -13,6 +13,7 @@ func init() {
 		{"включить и выключить до перезагрузки", []Command{startCmd, stopCmd, restartCmd}},
 		{"установка на колонку", []Command{installCmd, uninstallCmd, enableCmd, disableCmd}},
 		{"проверка и обслуживание", []Command{doctorCmd, testSoundCmd, rebootCmd}},
+		{"Bluetooth", []Command{btCmd}},
 		{"для стража", []Command{runCmd, rerouteCmd}},
 	}
 	for _, g := range groups {

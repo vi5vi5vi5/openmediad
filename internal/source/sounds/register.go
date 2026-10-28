@@ -16,15 +16,22 @@ type Config struct {
 	Preload []string `conf:"preload"` // файлы из /system/vendor/quasar/sounds/, которые раскодировать при запуске
 }
 
-const template = `[source.sounds]          # звонки таймеров и будильников: openmediad играет их сам (выключено — играет штатный mediad)
+// DefaultPreload — что раскодировать при запуске: звонок таймера и одноразовые звуки (после «Алиса», отмена, щелчок громкости,
+// включение и выключение Bluetooth). Без прогрева первый такой звук ждёт запуска GStreamer: на колонке 28.10.2026 сигнал
+// Bluetooth зазвучал через 0,55 с вместо ≈0,15 с у mediad. Всё вместе в памяти — ≈2,5 МБ (больше всего занимает звонок).
+var DefaultPreload = []string{"common/timer.wav", "common/spotter_start.mp3", "common/spotter_cancel.mp3", "common/volume_sound.mp3",
+	"common/bluetooth_turning_on_jingle.opus", "common/bluetooth_turning_off_jingle.opus"}
+
+const template = `[source.sounds]          # звонки таймеров и будильников, системные звуки: openmediad играет их сам (выключено — играет штатный mediad)
 enabled = true
-preload = ["common/timer.wav"]   # раскодировать заранее (путь внутри /system/vendor/quasar/sounds/): звонок начнётся сразу`
+# раскодировать заранее (пути внутри /system/vendor/quasar/sounds/): звук начнётся сразу, без запуска GStreamer
+preload = ["common/timer.wav", "common/spotter_start.mp3", "common/spotter_cancel.mp3", "common/volume_sound.mp3", "common/bluetooth_turning_on_jingle.opus", "common/bluetooth_turning_off_jingle.opus"]`
 
 func init() {
 	registry.Register(registry.Component{
 		Name: "sounds",
 		Defaults: func() any {
-			return &Config{Toggle: config.Toggle{Enabled: true}, Preload: []string{"common/timer.wav"}}
+			return &Config{Toggle: config.Toggle{Enabled: true}, Preload: append([]string(nil), DefaultPreload...)}
 		},
 		Template: template,
 		New: func(env *registry.Env, cfg any) (any, error) {
@@ -35,16 +42,19 @@ func init() {
 			}
 			b := &Backend{Engine: eng, Events: m}
 			logf := env.Logf("sound")
-			for _, p := range cfg.(*Config).Preload {
-				path := Dir + strings.TrimPrefix(p, "/")
-				go func() { // раскодирование ≈0,5 с: не задерживает запуск
+			// раскодирование ≈0,5 с на файл: в фоне, чтобы не задерживать запуск, и по очереди — GStreamer на время разбора
+			// занимает ≈30 МБ, несколько сразу колонке ни к чему
+			preload := cfg.(*Config).Preload
+			go func() {
+				for _, p := range preload {
+					path := Dir + strings.TrimPrefix(p, "/")
 					if err := b.Preload(path); err != nil {
-						logf("прогрев %s не удался: %v (звонок раскодируется при первом запуске)", path, err)
+						logf("прогрев %s не удался: %v (звук раскодируется при первом запуске)", path, err)
 					} else {
 						logf("прогрето в память: %s", path)
 					}
-				}()
-			}
+				}
+			}()
 			return b, nil
 		},
 	})
