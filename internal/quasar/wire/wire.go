@@ -189,6 +189,63 @@ func CancelDialog() []byte {
 	return Remoting("AliceCapability", 8, pb.AppendUint(nil, 1, 3))
 }
 
+// TextInput — текстовый запрос Алисе (AliceCapability, метод 8, вид 0; 'q' в maind --cli): то же, что сказать фразу голосом.
+// Облако отвечает директивами (например, player_pause), и платформа выполняет их со своей анимацией. id — UUID запроса,
+// eventID — UUID поля 7 (у maind --cli — свой на каждый запрос). Поля и их порядок — как в записи mdbg1.pcap.
+func TextInput(id, eventID, text string) []byte {
+	js := `{"asr_result":[],"attached_files":[],"text":` + jsonASCII(text) + `,"type":"text_input"}`
+	var ev []byte
+	ev = pb.AppendUint(ev, 1, 2)
+	ev = pb.AppendUint(ev, 2, 3)
+	ev = pb.AppendUint(ev, 3, 1)
+	ev = pb.AppendString(ev, 4, eventID)
+	var q []byte
+	q = pb.AppendString(q, 1, id)
+	q = pb.AppendString(q, 2, js)
+	for _, f := range [][2]uint64{{3, 0}, {4, 1}, {5, 0}, {6, 0}} {
+		q = pb.AppendUint(q, f[0], f[1])
+	}
+	q = pb.AppendBytes(q, 7, ev)
+	for _, f := range [][2]uint64{{8, 0}, {9, 0}, {10, 0}, {11, 0}, {12, 1}} {
+		q = pb.AppendUint(q, f[0], f[1])
+	}
+	q = pb.AppendString(q, 15, "")
+	q = pb.AppendString(q, 16, "")
+	q = pb.AppendString(q, 17, "")
+	q = pb.AppendUint(q, 18, 1)
+	q = pb.AppendUint(q, 19, 0)
+	q = pb.AppendUint(q, 20, 1)
+	q = pb.AppendString(q, 21, "")
+	q = pb.AppendString(q, 25, "")
+	var m []byte
+	m = pb.AppendUint(m, 1, 0)
+	m = pb.AppendBytes(m, 2, q)
+	m = pb.AppendUint(m, 3, 0)
+	return Remoting("AliceCapability", 8, m)
+}
+
+// jsonASCII — строка JSON, где всё не-ASCII записано как \uXXXX (так пишет прошивка).
+func jsonASCII(s string) string {
+	var b []byte
+	b = append(b, '"')
+	for _, r := range s {
+		switch {
+		case r == '"' || r == '\\':
+			b = append(b, '\\', byte(r))
+		case r < 0x20 || r >= 0x7f:
+			if r > 0xffff {
+				r -= 0x10000
+				b = fmt.Appendf(b, `\u%04x\u%04x`, 0xd800+(r>>10), 0xdc00+(r&0x3ff))
+			} else {
+				b = fmt.Appendf(b, `\u%04x`, r)
+			}
+		default:
+			b = append(b, byte(r))
+		}
+	}
+	return string(append(b, '"'))
+}
+
 // Виды команд PlaybackControlCapability (поле 1 метода 13), сняты с maind --cli 28.10.2026.
 const (
 	playbackPause  = 1 // 'o'

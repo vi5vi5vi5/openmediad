@@ -72,6 +72,16 @@ func (c *Client) Send(ctx context.Context, cmd Command) error {
 	default:
 		return fmt.Errorf("control: неизвестная команда %d", int(cmd))
 	}
+	return c.send(ctx, frame)
+}
+
+// Ask — текстовый запрос Алисе, как сказанная голосом фраза (облако ответит директивами; платформа выполнит их со своей
+// анимацией). Нужен там, где локальная команда анимации не даёт: «поставь на паузу».
+func (c *Client) Ask(ctx context.Context, text string) error {
+	return c.send(ctx, wire.TextInput(newID(), newID(), text))
+}
+
+func (c *Client) send(ctx context.Context, frame []byte) error {
 	addr := c.Addr
 	if addr == "" {
 		addr = DefaultAddr

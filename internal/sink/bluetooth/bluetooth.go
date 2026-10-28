@@ -6,7 +6,8 @@
 // Пока наушники подключены, в них открыт один постоянный канал (mixer.go): все потоки движка смешиваются в него, в паузах
 // идёт тишина. Платформа принимает любой ставший активным транспорт A2DP за звук телефона, отменяет музыку Яндекса и
 // потом считает последним плеером Bluetooth (проверено 28.10.2026, BUS-PROTOCOL.md §2.7б), поэтому транспорт наушников
-// ей адресно «удаляется» сразу, как появился, — до того, как канал его включит.
+// ей адресно «удаляется» сразу, как появился, — до того, как канал его включит, — а когда канал включился, возвращается
+// простаивающим: так она видит громкость наушников, но не их звук.
 //
 // Выход доступен, пока у выбранных наушников есть PCM вывода; за этим следят сигналы BlueZ и BlueALSA (без опроса).
 // Отключились наушники — смеситель останавливается с ошибкой, и движок переводит потоки на следующий выход маршрута.
@@ -38,11 +39,13 @@ type Client interface {
 	State(ctx context.Context) (bluez.State, error)
 	Watch(ctx context.Context) (<-chan struct{}, error)
 	Connect(ctx context.Context, dev dbus.ObjectPath) error
+	Disconnect(ctx context.Context, dev dbus.ObjectPath) error
 	SetPCMVolume(ctx context.Context, pcm dbus.ObjectPath, level byte) error
 	SetPCMSoftVolume(ctx context.Context, pcm dbus.ObjectPath, on bool) error
 	Connections(ctx context.Context, pid int) ([]string, error)
 	HideTransport(dests []string, path dbus.ObjectPath) error
 	ForgetTransport(dests []string, path dbus.ObjectPath) error
+	ShowTransport(ctx context.Context, dests []string, path dbus.ObjectPath) error
 	Close()
 }
 
@@ -50,6 +53,7 @@ type Client interface {
 type Master interface {
 	Level() (cur, max int, ok bool)
 	Changes() <-chan struct{} // отметка при каждом изменении (несколько подряд сливаются)
+	Set(v int) error          // поставить значение (как Level: от 0 до max)
 	Close()
 }
 
@@ -60,7 +64,14 @@ type Sink struct {
 	Volume    string        // VolumeSpeaker (по умолчанию) или VolumeHeadphones
 	VolumeMap VolumeMap     // шкала громкости платформы; пустая — как у bergamot
 	Reconnect time.Duration // как часто пробовать подключить выбранные наушники, пока их нет; 0 — не пробовать
-	Logf      func(string, ...any)
+	// HoldSpeaker — пока подключены наушники, громкость динамиков не меняется: кнопки, голос и экран управляют наушниками
+	// (режим speaker), а голос Алисы на динамиках звучит, как до подключения. Отключились — уровень платформы
+	// возвращается к уровню динамиков.
+	HoldSpeaker bool
+	// PlatformLevel (необязательный) — поставить уровень громкости платформы (0–20), как голосом: им после отключения
+	// наушников уровень возвращается к динамикам.
+	PlatformLevel func(level int) error
+	Logf          func(string, ...any)
 
 	// OpenMaster (необязательный) открывает слежение за громкостью колонки при Start; nil — громкость не повторяется.
 	OpenMaster func() (Master, error)
@@ -87,13 +98,41 @@ type Sink struct {
 	attempts  int
 	mix       *mixer
 	mixAddr   string
-	hidden    map[dbus.ObjectPath]bool // транспорты наушников, которые платформа уже забыла
-	hidePID   int                      // платформа, которой это сказано (перезапустилась — сказать заново)
+	view      map[dbus.ObjectPath]platformView // что платформа знает о транспортах наушников
+	hidePID   int                              // платформа, которой это сказано (перезапустилась — сказать заново)
 	hides     int
-	keys      io.ReadCloser // устройство кнопок наушников, пока читается
+	synced    map[string]bool // наушники, громкость которых платформа ведёт сама (транспорт ей показан)
+	keys      io.ReadCloser   // устройство кнопок наушников, пока читается
 	keysAddr  string
 	keysTries int
 	arrival   func()
+	btOff     bool      // «выключи блютуз»: наушники отключены и сами не подключаются до «включи блютуз»
+	btCmd     chan bool // команды платформы «включи/выключи блютуз» для serve
+	held      int       // громкость динамиков (Master), удерживаемая, пока подключены наушники; -1 — не удерживается
+	heldWant  int       // что ставила платформа, пока громкость удерживалась (уровень наушников)
+}
+
+// PlatformBluetooth — платформа выполнила «включи блютуз» (on) или «выключи блютуз». Штатно «выключи» только прячет колонку
+// от новых устройств, а подключённые наушники продолжали бы играть: выход их отключает и до «включи» сам не подключает.
+func (s *Sink) PlatformBluetooth(on bool) {
+	s.mu.Lock()
+	ch := s.btCmd
+	s.mu.Unlock()
+	if ch == nil {
+		return
+	}
+	select {
+	case ch <- on:
+	default:
+		select { // старую команду заменить новой
+		case <-ch:
+		default:
+		}
+		select {
+		case ch <- on:
+		default:
+		}
+	}
 }
 
 // OnArrival задаёт, кого звать, когда наушники подключились и канал в них открыт: звучащие потоки переходят в них.
@@ -106,6 +145,7 @@ func (s *Sink) OnArrival(f func()) {
 // target — наушники, в которые сейчас можно играть.
 type target struct {
 	addr     string
+	dev      dbus.ObjectPath
 	name     string
 	names    []string // имя и псевдоним устройства (по ним ищется устройство кнопок)
 	pcm      dbus.ObjectPath
@@ -119,15 +159,20 @@ func (s *Sink) Name() string { return "bluetooth" }
 // Available — наушники подключены и у них есть PCM вывода. Быстро: читает снимок, который держит Start.
 func (s *Sink) Available() bool { return s.cur.Load() != nil }
 
-// Open — поток движка в наушники: через смеситель (он открывается при подключении наушников; если его нет — сейчас).
+// Open — поток движка в наушники: через смеситель. Канал открывает только serve (refresh), после того как транспорт
+// спрятан от платформы; если канала сейчас нет, поток идёт на следующий выход маршрута, а когда канал откроется —
+// вернётся (OnArrival).
 func (s *Sink) Open(f audio.Format) (audio.Output, error) {
 	t := s.cur.Load()
 	if t == nil {
 		return nil, fmt.Errorf("наушники не подключены")
 	}
-	m, err := s.ensureMixer(t.addr)
-	if err != nil {
-		return nil, err
+	s.mu.Lock()
+	m := s.mix
+	ok := m != nil && s.mixAddr == t.addr && m.Err() == nil
+	s.mu.Unlock()
+	if !ok {
+		return nil, fmt.Errorf("канал в наушники ещё не открыт")
 	}
 	return m.Open(f)
 }
@@ -186,7 +231,8 @@ func (s *Sink) Start(ctx context.Context) error {
 	ctx, cancel := context.WithCancel(ctx)
 	s.mu.Lock()
 	s.cancel, s.done = cancel, make(chan struct{})
-	s.lastVol = -1
+	s.lastVol, s.held = -1, -1
+	s.btCmd = make(chan bool, 1)
 	s.mu.Unlock()
 	if s.OpenMaster != nil && s.volumeMode() == VolumeSpeaker {
 		m, err := s.OpenMaster()
@@ -306,7 +352,11 @@ func (s *Sink) serve(ctx context.Context, c Client) error {
 				return err
 			}
 		case <-master:
-			s.applyVolume(ctx, c, false)
+			if !s.holdSpeaker() {
+				s.applyVolume(ctx, c, false)
+			}
+		case on := <-s.btCmd:
+			s.platformBluetooth(ctx, c, on)
 		case <-retry:
 			s.reconnect(ctx, c)
 		}
@@ -323,15 +373,17 @@ func (s *Sink) refresh(ctx context.Context, c Client) error {
 	p, ok := st.PlaybackPCM(s.Device)
 	if !ok {
 		s.setTarget(nil)
+		s.releaseSpeaker()
 		return nil
 	}
-	t := &target{addr: p.Address, pcm: p.Path, rate: p.Sampling, channels: p.Channels}
+	t := &target{addr: p.Address, dev: p.Device, pcm: p.Path, rate: p.Sampling, channels: p.Channels}
 	if d, ok := st.Device(p.Address); ok {
 		t.name, t.names = d.Label(), []string{d.Name, d.Alias}
 	}
 	fresh := s.setTarget(t)
 	if fresh {
 		s.applyVolume(ctx, c, true)
+		s.holdSpeakerAt(t)
 	}
 	if !s.mixerAlive() {
 		if _, err := s.ensureMixer(t.addr); err != nil {
@@ -356,12 +408,26 @@ func (s *Sink) mixerAlive() bool {
 	return s.mix != nil && s.mix.Err() == nil
 }
 
-// hideTransports прячет от платформы транспорты наушников (BUS-PROTOCOL.md, §2.7б). Иначе она примет включение канала
-// за звук телефона: заберёт аудиофокус, отменит музыку и будет считать последним плеером Bluetooth («продолжи»,
-// «дальше» уйдут ему). Каждый новый транспорт в наушники платформе адресно «удаляется» сразу, как появился, — до того,
-// как канал его включит (refresh зовёт это раньше ensureMixer): тогда она его включения не видит вовсе. Если транспорт
-// уже активен (демон перезапустился при открытом канале), сначала «простаивает» — отпустить фокус, если она его забрала.
-// Один раз на путь транспорта; платформа перезапустилась — заново.
+// platformView — что платформа знает о транспорте наушников (с наших слов).
+type platformView int
+
+const (
+	viewOwn       platformView = iota // ничего не говорили: она видит его таким, как его объявил BlueZ
+	viewForgotten                     // сказано «удалён»: его включения она не видит
+	viewIdle                          // возвращён простаивающим: видит громкость наушников, но не их звук
+)
+
+// hideTransports прячет от платформы звук в наушники (BUS-PROTOCOL.md, §2.7б). Иначе она примет включение канала за звук
+// телефона: заберёт аудиофокус, отменит музыку и будет считать последним плеером Bluetooth («продолжи», «дальше» уйдут
+// ему). Громкость наушников она тоже ведёт через объект транспорта: ставит им громкость своего уровня, берёт себе их
+// громкость (колесо, кнопки), показывает её на экране. Поэтому по каждому транспорту в наушники:
+//   - простаивает — адресно «удалён» (до того, как канал его включит: refresh зовёт это раньше ensureMixer); тогда его
+//     включения платформа не видит;
+//   - включился — в режиме громкости speaker адресно «появился», но простаивающим: дальше, пока канал открыт, BlueZ
+//     состояние не меняет, и платформа видит только громкость; в режиме headphones остаётся «удалён» (громкость
+//     наушников — своя);
+//   - активен, а мы о нём ещё ничего не говорили (демон перезапустился при открытом канале, перезапустилась платформа) —
+//     сначала «простаивает»: она отпустит фокус, если забрала.
 func (s *Sink) hideTransports(ctx context.Context, c Client, ts []bluez.Transport) {
 	var mine []bluez.Transport
 	for _, t := range ts {
@@ -369,24 +435,42 @@ func (s *Sink) hideTransports(ctx context.Context, c Client, ts []bluez.Transpor
 			mine = append(mine, t)
 		}
 	}
+	defer func() { // чьей громкостью платформа сейчас управляет сама
+		s.mu.Lock()
+		s.synced = map[string]bool{}
+		for _, t := range mine {
+			if s.view[t.Path] == viewIdle {
+				s.synced[strings.ToUpper(t.Address)] = true
+			}
+		}
+		s.mu.Unlock()
+	}()
 	pid := 0
 	if len(mine) > 0 && s.PlatformPID != nil {
 		pid = s.PlatformPID()
 	}
-	var todo []bluez.Transport
+	type step struct {
+		t    bluez.Transport
+		next platformView
+	}
+	var todo []step
 	s.mu.Lock()
 	if pid != s.hidePID {
-		s.hidden, s.hidePID = nil, pid
+		s.view, s.hidePID = nil, pid
 	}
-	hidden := map[dbus.ObjectPath]bool{} // пропавшие транспорты забываются: путь может вернуться с новым подключением
+	view := map[dbus.ObjectPath]platformView{} // пропавшие транспорты забываются: путь может вернуться с новым подключением
 	for _, t := range mine {
-		if s.hidden[t.Path] {
-			hidden[t.Path] = true
-		} else {
-			todo = append(todo, t)
+		v := s.view[t.Path]
+		view[t.Path] = v
+		want := viewForgotten
+		if t.Active() && s.volumeMode() == VolumeSpeaker {
+			want = viewIdle
+		}
+		if v != want {
+			todo = append(todo, step{t, want})
 		}
 	}
-	s.hidden = hidden
+	s.view = view
 	s.mu.Unlock()
 	if len(todo) == 0 || s.PlatformPID == nil {
 		return
@@ -400,22 +484,36 @@ func (s *Sink) hideTransports(ctx context.Context, c Client, ts []bluez.Transpor
 		s.note("соединения платформы с шиной не найдены (%v): канал в наушники от неё не скрыт", err)
 		return
 	}
-	for _, t := range todo {
-		if t.Active() {
-			if err := c.HideTransport(conns, t.Path); err != nil {
-				s.note("скрыть канал в наушники от платформы: %v", err)
-				continue
-			}
+	for _, st := range todo {
+		var err error
+		s.mu.Lock()
+		prev := s.view[st.t.Path]
+		s.mu.Unlock()
+		if prev == viewOwn && st.t.Active() { // она могла уже счесть его телефоном: пусть отпустит фокус
+			err = c.HideTransport(conns, st.t.Path)
 		}
-		if err := c.ForgetTransport(conns, t.Path); err != nil {
+		switch {
+		case err != nil:
+		case st.next == viewForgotten:
+			err = c.ForgetTransport(conns, st.t.Path)
+		case prev == viewForgotten:
+			err = c.ShowTransport(ctx, conns, st.t.Path)
+		}
+		if err != nil {
 			s.note("скрыть канал в наушники от платформы: %v", err)
 			continue
 		}
 		s.mu.Lock()
-		s.hidden[t.Path] = true
-		s.hides++
+		s.view[st.t.Path] = st.next
+		if st.next == viewForgotten {
+			s.hides++
+		}
 		s.mu.Unlock()
-		s.logf("канал в наушники скрыт от платформы: она не примет его за телефон и не остановит музыку")
+		if st.next == viewForgotten {
+			s.logf("канал в наушники скрыт от платформы: она не примет его за телефон и не остановит музыку")
+		} else {
+			s.logf("канал в наушники включён; платформе он показан простаивающим — она видит громкость наушников, но не их звук")
+		}
 	}
 }
 
@@ -451,11 +549,23 @@ func (s *Sink) volumeMode() string {
 	return s.Volume
 }
 
-// applyVolume ставит наушникам громкость колонки (режим speaker; пересчёт — volume.go). force — даже если уровень не
-// поменялся (новые наушники).
+// applyVolume — громкость наушников. Она одна — на самих наушниках (AVRCP): программную громкость BlueALSA при подключении
+// выключаем, иначе звук приглушался бы дважды. В режиме speaker, пока транспорт показан платформе (hideTransports), громкость
+// ведёт она сама: ставит наушникам громкость своего уровня (кнопки колонки, голос), берёт себе их громкость (колесо,
+// кнопки наушников) и показывает её на экране [проверено 28.10.2026]. Движок только выравнивает их при подключении
+// (тогда транспорт ещё спрятан) и ведёт громкость сам, если платформы нет (пересчёт — volume.go). force — новые наушники.
 func (s *Sink) applyVolume(ctx context.Context, c Client, force bool) {
 	t := s.cur.Load()
-	if t == nil || s.master == nil {
+	if t == nil {
+		return
+	}
+	if force {
+		if err := c.SetPCMSoftVolume(ctx, t.pcm, false); err != nil {
+			s.note("громкость наушников: %v", err)
+			return
+		}
+	}
+	if s.master == nil {
 		return
 	}
 	cur, max, ok := s.master.Level()
@@ -466,16 +576,10 @@ func (s *Sink) applyVolume(ctx context.Context, c Client, force bool) {
 	s.mu.Lock()
 	same := s.lastVol == lvl
 	s.lastVol = lvl
+	synced := s.synced[strings.ToUpper(t.addr)]
 	s.mu.Unlock()
-	if same && !force {
+	if !force && (same || synced) {
 		return
-	}
-	if force {
-		// громкость меняет сама BlueALSA: так она работает с любыми наушниками и не спорит с их кнопками по AVRCP
-		if err := c.SetPCMSoftVolume(ctx, t.pcm, true); err != nil {
-			s.note("громкость наушников: %v", err)
-			return
-		}
 	}
 	if err := c.SetPCMVolume(ctx, t.pcm, byte(lvl)); err != nil {
 		s.note("громкость наушников: %v", err)
@@ -487,7 +591,10 @@ func (s *Sink) applyVolume(ctx context.Context, c Client, force bool) {
 // reconnect пробует подключить выбранные наушники, если их нет: когда Bluetooth колонки «выключен» (платформа запрещает
 // входящие соединения), сами наушники подключиться не могут.
 func (s *Sink) reconnect(ctx context.Context, c Client) {
-	if s.cur.Load() != nil {
+	s.mu.Lock()
+	off := s.btOff
+	s.mu.Unlock()
+	if s.cur.Load() != nil || off {
 		return
 	}
 	st, err := c.State(ctx)
@@ -497,6 +604,13 @@ func (s *Sink) reconnect(ctx context.Context, c Client) {
 	d, ok := st.Device(s.Device)
 	if !ok || !d.Paired || d.Connected {
 		return
+	}
+	for _, p := range st.PCMs {
+		if p.A2DP() && !p.Playback() {
+			// подключён телефон (звук с него на колонку): подключение наушников его выбило бы [проверено 28.10.2026] —
+			// телефон и наушники по очереди, ждём, пока он отключится
+			return
+		}
 	}
 	s.mu.Lock()
 	s.attempts++

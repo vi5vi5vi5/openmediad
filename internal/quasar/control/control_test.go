@@ -74,3 +74,16 @@ func TestNewID(t *testing.T) {
 		t.Fatalf("%q %q", a, b)
 	}
 }
+
+// Текстовый запрос — тоже после регистрации, объектом AliceCapability.
+func TestAsk(t *testing.T) {
+	c, got := fakeAliced(t, true)
+	if err := c.Ask(context.Background(), "поставь на паузу"); err != nil {
+		t.Fatal(err)
+	}
+	<-got
+	q := <-got
+	if obj, _ := pb.Str(q.Body, 7); obj != "AliceCapability" {
+		t.Fatalf("объект %q", obj)
+	}
+}

@@ -61,6 +61,18 @@ type Machine struct {
 	ducked   bool
 }
 
+// Playing — играет ли сейчас музыка, которую ведёт автомат (запускается или звучит; не на паузе).
+func (m *Machine) Playing() bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, in := range m.players {
+		if in.st == stStarting || in.st == stPlaying {
+			return true
+		}
+	}
+	return false
+}
+
 // SetDuck меняет громкость музыки во время диалога на ходу (настройка focus.duck_gain). Звучащая сейчас приглушённая
 // музыка переходит к новой громкости плавно.
 func (m *Machine) SetDuck(g float64) {

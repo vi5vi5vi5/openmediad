@@ -32,6 +32,7 @@ type Status struct {
 	Players     any               `json:"players,omitempty"`   // с Detail
 	Tracks      any               `json:"tracks,omitempty"`    // с Detail
 	Bluetooth   any               `json:"bluetooth,omitempty"` // выход в наушники (если компонент работает)
+	Phone       any               `json:"phone,omitempty"`     // звук с телефона (компонент btin)
 }
 
 // ComponentStatus — компонент сборки в демоне.
@@ -63,6 +64,8 @@ func (d *daemon) status(detail bool) Status {
 		case !ok:
 		case c.name == "bluetooth":
 			st.Bluetooth = s.DebugState()
+		case c.name == "btin":
+			st.Phone = s.DebugState()
 		case detail:
 			st.Tracks = s.DebugState()
 		}
@@ -98,6 +101,7 @@ func (d *daemon) debugState() any {
 		"players":     st.Players,
 		"engine":      map[string]any{"треки": st.Tracks},
 		"bluetooth":   st.Bluetooth,
+		"phone":       st.Phone,
 	}
 }
 

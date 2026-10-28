@@ -18,6 +18,9 @@ func btIdleCmd(args []string) error {
 	pid := fs.Int("pid", 0, "PID процесса платформы (maind --platformd)")
 	state := fs.String("state", "idle", "какое состояние сообщить")
 	remove := fs.Bool("remove", false, "вместо состояния сообщить, что транспорт удалён (InterfacesRemoved)")
+	add := fs.Bool("add", false, "сообщить, что транспорт появился (InterfacesAdded) — с настоящими свойствами, но State из -state")
+	volume := fs.Int("volume", -1, "сообщить громкость транспорта (PropertiesChanged Volume, 0–127)")
+	set := fs.Int("set", -1, "по-настоящему поставить громкость транспорта через BlueZ (как кнопки наушников), 0–127")
 	fs.Parse(args)
 	if fs.NArg() != 1 || *pid == 0 {
 		return fmt.Errorf("нужны -pid PID и адрес устройства")
@@ -61,11 +64,38 @@ func btIdleCmd(args []string) error {
 			continue
 		}
 		ifaces := v.(map[any]any)
-		if _, ok := ifaces["org.bluez.MediaTransport1"]; !ok {
+		real, ok := ifaces["org.bluez.MediaTransport1"]
+		if !ok {
+			continue
+		}
+		if *set >= 0 {
+			if _, err := c.Call(ctx, "org.bluez", dbus.ObjectPath(path), "org.freedesktop.DBus.Properties", "Set", "ssv",
+				"org.bluez.MediaTransport1", "Volume", dbus.Variant{Sig: "q", Value: uint16(*set)}); err != nil {
+				return err
+			}
+			fmt.Printf("%s: Volume=%d (через BlueZ)\n", path, *set)
+			sent++
 			continue
 		}
 		props := map[string]dbus.Variant{"State": {Sig: "s", Value: *state}}
+		if *volume >= 0 {
+			props = map[string]dbus.Variant{"Volume": {Sig: "q", Value: uint16(*volume)}}
+		}
 		for _, t := range targets {
+			if *add {
+				all := map[any]any{}
+				for k, x := range real.(map[any]any) {
+					all[k] = x
+				}
+				all["State"] = dbus.Variant{Sig: "s", Value: *state}
+				fmt.Printf("свойства: %v\n", all)
+				if err := c.Emit(t, "/", "org.freedesktop.DBus.ObjectManager", "InterfacesAdded", "oa{sa{sv}}",
+					dbus.ObjectPath(path), map[string]any{"org.bluez.MediaTransport1": all}); err != nil {
+					return err
+				}
+				fmt.Printf("%s: появился (State=%s) → %s\n", path, *state, t)
+				continue
+			}
 			if *remove {
 				if err := c.Emit(t, "/", "org.freedesktop.DBus.ObjectManager", "InterfacesRemoved", "oas",
 					dbus.ObjectPath(path), []any{"org.bluez.MediaTransport1"}); err != nil {

@@ -8,6 +8,7 @@ import (
 
 	"openmediad/internal/config"
 	"openmediad/internal/quasar/control"
+	"openmediad/internal/quasar/mediad"
 	"openmediad/internal/registry"
 	"openmediad/internal/system/alsactl"
 	"openmediad/internal/system/bluez"
@@ -21,6 +22,7 @@ type Config struct {
 	Aplay     string        `conf:"aplay"`     // системный aplay
 	Volume    string        `conf:"volume"`    // speaker | headphones
 	Reconnect time.Duration `conf:"reconnect"` // 0 — не переподключать
+	Hold      bool          `conf:"hold_speaker"`
 }
 
 // masterControl — регулятор громкости колонки (пользовательский элемент ALSA; amixer называет его «Master»).
@@ -30,7 +32,8 @@ const template = `[sink.bluetooth]         # выход «Bluetooth-наушни
 enabled = true
 device = ""              # адрес наушников (AA:BB:CC:DD:EE:FF); пусто — любые подключённые
 aplay = "/usr/bin/aplay"
-volume = "speaker"       # speaker — громкость наушников повторяет громкость колонки; headphones — на самих наушниках
+volume = "speaker"       # speaker — кнопки, голос и экран колонки управляют громкостью наушников; headphones — только сами наушники
+hold_speaker = true      # пока подключены наушники, громкость динамиков (голос Алисы) не меняется вместе с ними
 reconnect = "30s"        # как часто подключать выбранные наушники, пока их нет; "0s" — не подключать самим`
 
 // platformPID — PID платформы (maind --platformd); 0 — не найдена.
@@ -49,7 +52,7 @@ func init() {
 	registry.Register(registry.Component{
 		Name: "bluetooth",
 		Defaults: func() any {
-			return &Config{Toggle: config.Toggle{Enabled: true}, Aplay: "/usr/bin/aplay", Volume: VolumeSpeaker, Reconnect: 30 * time.Second}
+			return &Config{Toggle: config.Toggle{Enabled: true}, Aplay: "/usr/bin/aplay", Volume: VolumeSpeaker, Hold: true, Reconnect: 30 * time.Second}
 		},
 		Template: template,
 		New: func(env *registry.Env, cfg any) (any, error) {
@@ -69,10 +72,19 @@ func init() {
 				logf("шкала громкости платформы не прочитана (%v): беру шкалу bergamot", err)
 			}
 			ctl := &control.Client{}
+			mach, _ := registry.Use[*mediad.Machine](env, "machine")
 			buttons := func(b Button) {
-				cmd := map[Button]control.Command{ButtonPlayPause: control.Toggle, ButtonStop: control.Pause,
-					ButtonNext: control.Next, ButtonPrev: control.Prev}[b]
-				if err := ctl.Send(context.Background(), cmd); err != nil {
+				var err error
+				switch {
+				case (b == ButtonPlayPause || b == ButtonStop) && mach != nil && mach.Playing():
+					// пауза — как голосом: локальная команда ставит паузу без анимации на экране, а директива облака — с ней
+					err = ctl.Ask(context.Background(), "поставь на паузу")
+				default:
+					cmd := map[Button]control.Command{ButtonPlayPause: control.Toggle, ButtonStop: control.Pause,
+						ButtonNext: control.Next, ButtonPrev: control.Prev}[b]
+					err = ctl.Send(context.Background(), cmd)
+				}
+				if err != nil {
 					logf("кнопка наушников «%s»: платформе не передана: %v", b, err)
 					return
 				}
@@ -84,6 +96,14 @@ func init() {
 				Volume:      c.Volume,
 				VolumeMap:   vm,
 				Reconnect:   c.Reconnect,
+				HoldSpeaker: c.Hold,
+				PlatformLevel: func(level int) error { // как голосом: «громкость N» (0–10), уровень платформы — 2N
+					n := level / 2
+					if n == 0 && level > 0 {
+						n = 1
+					}
+					return ctl.Ask(context.Background(), fmt.Sprintf("громкость %d", n))
+				},
 				Logf:        logf,
 				OpenMaster:  func() (Master, error) { return alsactl.WatchInteger(masterControl) },
 				PlatformPID: platformPID,

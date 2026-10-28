@@ -93,6 +93,9 @@ func printStatus(c *Ctx, st app.Status, verbose bool) {
 	if line := bluetoothLine(st.Bluetooth); line != "" {
 		c.printf("наушники:   %s\n", line)
 	}
+	if line := phoneLine(st.Phone); line != "" {
+		c.printf("телефон:    %s\n", line)
+	}
 	c.printf("журнал:     уровень %s (openmediad logs)\n", st.LogLevel)
 	for _, w := range st.Warnings {
 		c.printf("внимание:   %s\n", w)
@@ -101,6 +104,35 @@ func printStatus(c *Ctx, st app.Status, verbose bool) {
 		printJSON(c, "плееры", st.Players)
 		printJSON(c, "треки", st.Tracks)
 	}
+}
+
+// phoneLine — звук с телефона из ответа демона (JSON: см. source/btin.State); пусто — компонента нет.
+func phoneLine(v any) string {
+	m, ok := v.(map[string]any)
+	if !ok {
+		return ""
+	}
+	if b, _ := m["bus"].(bool); !b {
+		return "Bluetooth недоступен (нет связи с BlueZ)"
+	}
+	s := "не подключён"
+	if p, _ := m["phone"].(string); p != "" {
+		codec, _ := m["codec"].(string)
+		rate, _ := m["rate"].(float64)
+		s = fmt.Sprintf("%s подключён (%s, %d Гц)", p, codec, int(rate))
+		switch run, _ := m["running"].(bool); {
+		case !run:
+			s += ", не играет"
+		case m["streaming"] == true:
+			s += ", играет через openmediad"
+		default:
+			s += ", играет, но поток не открыт"
+		}
+	}
+	if off, _ := m["aplay_off"].(bool); off {
+		s += "; bluealsa-aplay остановлен"
+	}
+	return s
 }
 
 // bluetoothLine — состояние выхода в наушники из ответа демона (JSON: см. sink/bluetooth.State); пусто — компонента нет.

@@ -378,6 +378,31 @@ func (c *Client) ForgetTransport(dests []string, path dbus.ObjectPath) error {
 	return c.emitTo(dests, "/", "org.freedesktop.DBus.ObjectManager", "InterfacesRemoved", "oas", path, []any{ifaceTransport})
 }
 
+// ShowTransport — обратное ForgetTransport: адресно сообщает соединениям dests, что транспорт есть (InterfacesAdded), с его
+// настоящими свойствами, но State = idle. Платформа снова следит за ним — видит громкость наушников (их кнопки, экран
+// колонки), — но считает его простаивающим. Пока канал в наушники открыт, BlueZ состояние не меняет, и она в это верит
+// (проверено 28.10.2026, BUS-PROTOCOL.md §2.7б).
+func (c *Client) ShowTransport(ctx context.Context, dests []string, path dbus.ObjectPath) error {
+	r, err := c.Bus.Call(ctx, bluezService, path, ifaceProps, "GetAll", "s", ifaceTransport)
+	if err != nil {
+		return err
+	}
+	if len(r) != 1 {
+		return errors.New("bluez: GetAll транспорта: пустой ответ")
+	}
+	real, ok := r[0].(map[any]any)
+	if !ok {
+		return fmt.Errorf("bluez: GetAll транспорта: %T", r[0])
+	}
+	props := make(map[any]any, len(real))
+	for k, v := range real {
+		props[k] = v
+	}
+	props["State"] = dbus.Variant{Sig: "s", Value: "idle"}
+	return c.emitTo(dests, "/", "org.freedesktop.DBus.ObjectManager", "InterfacesAdded", "oa{sa{sv}}", path,
+		map[string]any{ifaceTransport: props})
+}
+
 func (c *Client) emitTo(dests []string, path dbus.ObjectPath, iface, member, sig string, args ...any) error {
 	e, ok := c.Bus.(Emitter)
 	if !ok {

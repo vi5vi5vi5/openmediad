@@ -227,3 +227,25 @@ func TestForgetAndHideTransport(t *testing.T) {
 		t.Fatal("шина без сигналов — ошибка")
 	}
 }
+
+// Платформе транспорт возвращается с настоящими свойствами, но простаивающим.
+func TestShowTransport(t *testing.T) {
+	b := &emitBus{fakeBus: fakeBus{reply: map[string][]any{"org.bluez GetAll": {map[any]any{
+		"UUID":   dbus.Variant{Sig: "s", Value: UUIDAudioSource},
+		"State":  dbus.Variant{Sig: "s", Value: "active"},
+		"Volume": dbus.Variant{Sig: "q", Value: uint16(57)},
+	}}}, fail: map[string]error{}}}
+	c := &Client{Bus: b}
+	tr := dbus.ObjectPath("/org/bluez/hci0/dev_A0/sep1/fd9")
+	if err := c.ShowTransport(context.Background(), []string{":1.5"}, tr); err != nil {
+		t.Fatal(err)
+	}
+	want := ":1.5 / org.freedesktop.DBus.ObjectManager.InterfacesAdded oa{sa{sv}} [/org/bluez/hci0/dev_A0/sep1/fd9 " +
+		"map[org.bluez.MediaTransport1:map[State:{s idle} UUID:{s 0000110a-0000-1000-8000-00805f9b34fb} Volume:{q 57}]]]"
+	if len(b.sent) != 1 || !strings.EqualFold(b.sent[0], want) {
+		t.Fatalf("отправлено:\n%v\nждали:\n%s", b.sent, want)
+	}
+	if b.calls[0] != "org.bluez "+string(tr)+" org.freedesktop.DBus.Properties.GetAll s [org.bluez.MediaTransport1]" {
+		t.Fatalf("вызов %q", b.calls[0])
+	}
+}

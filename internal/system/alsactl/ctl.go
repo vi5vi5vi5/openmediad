@@ -3,6 +3,7 @@ package alsactl
 import (
 	"encoding/binary"
 	"errors"
+	"fmt"
 	"sync"
 	"sync/atomic"
 )
@@ -39,6 +40,7 @@ const (
 // Номера ioctl: _IOWR('U', номер, размер структуры).
 const (
 	ioctlRead      uintptr = 0xC0000000 | valueSize<<16 | 'U'<<8 | 0x12 // SNDRV_CTL_IOCTL_ELEM_READ
+	ioctlWrite     uintptr = 0xC0000000 | valueSize<<16 | 'U'<<8 | 0x13 // SNDRV_CTL_IOCTL_ELEM_WRITE
 	ioctlInfo      uintptr = 0xC0000000 | infoSize<<16 | 'U'<<8 | 0x11  // SNDRV_CTL_IOCTL_ELEM_INFO
 	ioctlSubscribe uintptr = 0xC0000000 | 4<<16 | 'U'<<8 | 0x16         // SNDRV_CTL_IOCTL_SUBSCRIBE_EVENTS
 )
@@ -92,6 +94,7 @@ type Watch struct {
 	name    string
 	min     int
 	max     int
+	count   int // каналов у регулятора (Set пишет во все)
 	cur     atomic.Int64
 	changes chan struct{}
 	ctl     control
@@ -103,7 +106,8 @@ type Watch struct {
 // control — открытое управляющее устройство (на Linux — файл; в тестах — подделка).
 type control interface {
 	readInt(name string) (int, error)
-	info(name string) (min, max int, err error)
+	writeInt(name string, v, count int) error
+	info(name string) (min, max, count int, err error)
 	subscribe() error
 	read(p []byte) (int, error)
 	close() error
@@ -119,7 +123,7 @@ func WatchInteger(name string) (*Watch, error) {
 }
 
 func newWatch(c control, name string) (*Watch, error) {
-	min, max, err := c.info(name)
+	min, max, count, err := c.info(name)
 	if err != nil {
 		c.close()
 		return nil, err
@@ -133,7 +137,7 @@ func newWatch(c control, name string) (*Watch, error) {
 		c.close()
 		return nil, err
 	}
-	w := &Watch{name: name, min: min, max: max, changes: make(chan struct{}, 1), ctl: c, done: make(chan struct{})}
+	w := &Watch{name: name, min: min, max: max, count: count, changes: make(chan struct{}, 1), ctl: c, done: make(chan struct{})}
 	w.cur.Store(int64(v))
 	go w.loop()
 	return w, nil
@@ -188,6 +192,14 @@ func (w *Watch) Err() error {
 // Changes — канал отметок об изменении значения.
 func (w *Watch) Changes() <-chan struct{} { return w.changes }
 
+// Set ставит значение (относительно минимума, как Level; всем каналам регулятора). Изменение придёт и в Changes.
+func (w *Watch) Set(v int) error {
+	if v < 0 || v > w.max-w.min {
+		return fmt.Errorf("alsactl: %q: значение %d вне 0…%d", w.name, v, w.max-w.min)
+	}
+	return w.ctl.writeInt(w.name, v+w.min, w.count)
+}
+
 // Close закрывает устройство; слежение прекращается.
 func (w *Watch) Close() {
 	w.once.Do(func() {
@@ -203,7 +215,7 @@ func ReadInteger(name string) (val, min, max int, err error) {
 		return 0, 0, 0, err
 	}
 	defer c.close()
-	if min, max, err = c.info(name); err != nil {
+	if min, max, _, err = c.info(name); err != nil {
 		return 0, 0, 0, err
 	}
 	val, err = c.readInt(name)

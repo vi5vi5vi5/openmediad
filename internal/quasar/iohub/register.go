@@ -17,13 +17,15 @@ import (
 // Config — секция [spectrum].
 type Config struct {
 	config.Toggle
-	Delay time.Duration `conf:"delay"` // через сколько после передачи aplay звук прозвучит: метка времени кадра = расчёт + delay
+	Delay  time.Duration `conf:"delay"`  // через сколько после передачи aplay звук прозвучит: метка времени кадра = расчёт + delay
+	Always bool          `conf:"always"` // показывать спектр музыки всё время, пока она играет (и после ответа Алисы)
 }
 
 const template = `[spectrum]               # спектр звука для дисплея и подсветки (сервис iohub)
 enabled = true
 delay = "300ms"          # через сколько после передачи в aplay звук слышен: кадр уходит сразу с меткой «расчёт + delay»;
-                         # анимация отстаёт от звука — уменьшить, опережает — увеличить (разумно 200–500ms)`
+                         # анимация отстаёт от звука — уменьшить, опережает — увеличить (разумно 200–500ms)
+always = false           # true — анимация частот всё время, пока играет музыка: после ответа Алисы она возвращается`
 
 func init() {
 	registry.Register(registry.Component{
@@ -39,6 +41,7 @@ func init() {
 			cli := &Client{Logf: env.Logf("engine")}
 			snd := NewSender(cli, cfg.(*Config).Delay, j)
 			eng.OnSpectrum = snd.Add
+			eng.SpectrumAlways = cfg.(*Config).Always
 			return &module{cli: cli, snd: snd}, nil
 		},
 	})

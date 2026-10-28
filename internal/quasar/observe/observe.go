@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"openmediad/internal/quasar/msg"
 	"openmediad/internal/quasar/wire"
 )
 
@@ -30,6 +31,9 @@ type Observer struct {
 	Bind    net.IP        // если задано, исходящие соединения идут с этого локального адреса (для проверки правил NAT)
 	// OnLine, если задан, получает строки вместо записи в Out: who — имя сервиса, text — описание без времени.
 	OnLine func(who, text string)
+	// OnReply, если задан, получает имена директив ответа Алисы (из AliceState aliced; один ответ приходит в нескольких
+	// состояниях — req одинаковый).
+	OnReply func(req string, directives []string)
 
 	mu     sync.Mutex
 	counts map[string]int
@@ -107,6 +111,12 @@ func (o *Observer) read(t Target, conn net.Conn) error {
 		o.mu.Unlock()
 		if line, show := Describe(t.Name, m, o.Opt); show {
 			o.logf(t.Name, "%s", line)
+		}
+		if o.OnReply != nil && m.Type == wire.TypeAliceState {
+			s := msg.AliceState(m.Body)
+			if _, js, ok := s.Reply(); ok {
+				o.OnReply(s.RequestID(), directiveNames(js))
+			}
 		}
 	}
 }

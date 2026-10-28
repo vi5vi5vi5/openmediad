@@ -116,9 +116,7 @@ func Run(ctx context.Context, o Options) error {
 	case <-time.After(100 * time.Millisecond):
 	}
 	d.startComponents(ctx)
-	if d.componentOn("debug") {
-		d.watchAliced(ctx)
-	}
+	d.watchAliced(ctx, d.componentOn("debug"))
 
 	go d.signals(ctx, cancel)
 	d.j.Log(journal.Info, "shim", fmt.Sprintf("шим: %s → %s (исходящие с %s)", o.Listen, o.Upstream, o.Src), "", nil)

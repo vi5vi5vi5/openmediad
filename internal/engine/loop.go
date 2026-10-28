@@ -37,7 +37,8 @@ type loopRun struct {
 	fade int     // сколько байт нарастания осталось
 
 	an        *spectrum.Analyzer
-	specStart bool // служебное сообщение о старте/продолжении потока спектра уже ушло
+	specStart bool      // служебное сообщение о старте/продолжении потока спектра уже ушло
+	specAt    time.Time // когда поток спектра объявлен последний раз (SpectrumAlways: объявлять снова)
 
 	reroutes  int       // переездов на другой выход подряд
 	rerouteAt time.Time // последний переезд

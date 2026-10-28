@@ -430,3 +430,94 @@ func TestParseClass(t *testing.T) {
 		t.Fatal("незнакомый класс")
 	}
 }
+
+// SpectrumAlways: голос Алисы договорил или диалог кончился (музыка снова в полную силу) — поток спектра играющей музыки
+// объявляется заново, чтобы платформа снова рисовала её анимацию. Без настройки — нет.
+func TestSpectrumAlwaysReannouncesMusic(t *testing.T) {
+	for _, always := range []bool{false, true} {
+		r := newRig(t)
+		r.mkOut = func() (*memOut, error) { return &memOut{delay: 2 * time.Millisecond}, nil }
+		var mu sync.Mutex
+		starts := map[uint64]int{}
+		r.e.SpectrumAlways = always
+		r.e.OnSpectrum = func(ev spectrum.Event) {
+			if ev.Kind == spectrum.KindStart {
+				mu.Lock()
+				starts[ev.Stream]++
+				mu.Unlock()
+			}
+		}
+		music := r.e.NewStream("m", Music, &memSource{f: audio.Stereo48, data: pcm(400000)}, Options{Spectrum: spectrum.SourceMusic}, r.events4("m"))
+		music.Play()
+		for _, want := range []string{"ready m", "playing m"} {
+			if ev := r.next(t); ev != want {
+				t.Fatalf("ждали %q, пришло %q", want, ev)
+			}
+		}
+		voice := r.e.NewStream("v", Voice, &memSource{f: audio.Mono48, data: pcm(9600)}, Options{Spectrum: spectrum.SourceVoice}, r.events4("v"))
+		voice.Play()
+		for ev := r.next(t); ev != "ended v"; ev = r.next(t) {
+		}
+		r.e.SetClassGain(Music, 0.3)
+		r.e.SetClassGain(Music, 1)
+		music.Close()
+		mu.Lock()
+		var mid uint64
+		for id, n := range starts {
+			if n >= 1 && id != 0 {
+				music.mu.Lock()
+				if id == music.specID {
+					mid = id
+				}
+				music.mu.Unlock()
+			}
+		}
+		n := starts[mid]
+		mu.Unlock()
+		want := 1
+		if always {
+			want = 3 // старт, после голоса, после конца приглушения
+		}
+		if mid == 0 || n != want {
+			t.Fatalf("always=%v: стартов спектра музыки %d, ждали %d (%v)", always, n, want, starts)
+		}
+	}
+}
+
+// SpectrumAlways: пока музыка играет, её поток спектра объявляется заново раз в spectrumRefresh (платформа гасит анимацию
+// через 15 с после «начат»), но не пока звучит голос и не во время приглушения.
+func TestSpectrumAlwaysRefreshesPeriodically(t *testing.T) {
+	old := spectrumRefresh
+	spectrumRefresh = 40 * time.Millisecond
+	defer func() { spectrumRefresh = old }()
+	r := newRig(t)
+	r.mkOut = func() (*memOut, error) { return &memOut{delay: 2 * time.Millisecond}, nil }
+	var mu sync.Mutex
+	starts := 0
+	r.e.SpectrumAlways = true
+	r.e.OnSpectrum = func(ev spectrum.Event) {
+		if ev.Kind == spectrum.KindStart && ev.Source == spectrum.SourceMusic {
+			mu.Lock()
+			starts++
+			mu.Unlock()
+		}
+	}
+	count := func() int { mu.Lock(); defer mu.Unlock(); return starts }
+	m := r.e.NewStream("m", Music, &memSource{f: audio.Stereo48, data: pcm(48000 * 4 * 10), loop: true}, Options{Spectrum: spectrum.SourceMusic, Endless: true}, Events{})
+	m.Play()
+	defer m.Close()
+	deadline := time.Now().Add(3 * time.Second)
+	for count() < 3 && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	if count() < 3 {
+		t.Fatalf("объявлений спектра музыки %d, ждали не меньше 3", count())
+	}
+	r.e.SetClassGain(Music, 0.3) // диалог: не объявляем
+	time.Sleep(30 * time.Millisecond)
+	n := count()
+	time.Sleep(150 * time.Millisecond)
+	if count() != n {
+		t.Fatalf("во время приглушения спектр музыки объявлялся: %d → %d", n, count())
+	}
+}

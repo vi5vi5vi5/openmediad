@@ -171,3 +171,17 @@ func TestBluetoothLine(t *testing.T) {
 		t.Fatalf("с кнопками: %q", got)
 	}
 }
+
+func TestPhoneLine(t *testing.T) {
+	if phoneLine(nil) != "" {
+		t.Fatal("компонента нет — строки нет")
+	}
+	m := map[string]any{"bus": true, "aplay_off": true}
+	if got := phoneLine(m); got != "не подключён; bluealsa-aplay остановлен" {
+		t.Fatalf("%q", got)
+	}
+	m["phone"], m["codec"], m["rate"], m["running"], m["streaming"] = "CC:FF", "SBC", float64(44100), true, true
+	if got := phoneLine(m); got != "CC:FF подключён (SBC, 44100 Гц), играет через openmediad; bluealsa-aplay остановлен" {
+		t.Fatalf("%q", got)
+	}
+}

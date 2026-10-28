@@ -52,7 +52,7 @@ var Catalog = []Info{
 	{Name: "spotify", Section: "source.spotify", Kind: Source, Summary: "Spotify (librespot)", Phase: 9},
 	{Name: "soundcloud", Section: "source.soundcloud", Kind: Source, Summary: "SoundCloud", Phase: 10},
 	{Name: "netin", Section: "source.netin", Kind: Source, Summary: "приём звука по сети", Phase: 11},
-	{Name: "btin", Section: "source.btin", Kind: Source, Summary: "приём звука с телефона по Bluetooth", Phase: 11},
+	{Name: "btin", Section: "source.btin", Kind: Source, Summary: "звук с телефона по Bluetooth через движок (опытный)", Ready: true},
 }
 
 // BySection ищет компонент каталога по секции настроек.

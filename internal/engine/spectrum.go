@@ -11,6 +11,10 @@ import (
 // нормализации и приглушения). У потока один идентификатор спектра на всю жизнь: первый вывод — «старт», продолжение после
 // паузы — «продолжение», конец каждого вывода — «остановка».
 
+// spectrumRefresh — как часто объявлять спектр музыки заново (SpectrumAlways): платформа гасит анимацию через 15 с после
+// «начат» («Stop spectogram by timeout», проверено 28.10.2026), а каждое «начат» отсчёт сбрасывает.
+var spectrumRefresh = 10 * time.Second
+
 func (r *loopRun) spectrumOn() bool {
 	return r.s.e.OnSpectrum != nil && r.s.opt.Spectrum != NoSpectrum
 }
@@ -51,7 +55,27 @@ func (r *loopRun) announce() {
 	}
 	id := s.specID
 	s.mu.Unlock()
+	if s.opt.Spectrum == spectrum.SourceVoice {
+		s.e.voiceSpectra.Add(1)
+	}
+	r.specAt = s.e.now()
 	s.e.OnSpectrum(spectrum.Event{Kind: kind, Source: s.opt.Spectrum, Stream: id, At: time.Now()})
+}
+
+// refreshSpectrum объявляет спектр музыки заново, если пора (SpectrumAlways): не во время диалога (музыка приглушена) и не
+// пока звучит голос — их анимацию не перебиваем.
+func (r *loopRun) refreshSpectrum() {
+	s := r.s
+	e := s.e
+	if !e.SpectrumAlways || s.opt.Spectrum != spectrum.SourceMusic || !r.specStart {
+		return
+	}
+	now := e.now()
+	if now.Sub(r.specAt) < spectrumRefresh || e.ClassGain(Music) < 1 || e.voiceSpectra.Load() > 0 {
+		return
+	}
+	r.specAt = now
+	e.OnSpectrum(spectrum.Event{Kind: spectrum.KindStart, Source: spectrum.SourceMusic, Stream: r.specID(), At: time.Now()})
 }
 
 // feed отдаёт звук анализатору.
@@ -60,6 +84,7 @@ func (r *loopRun) feed(pcm []byte) {
 		return
 	}
 	r.announce()
+	r.refreshSpectrum()
 	if r.s.f.Channels == 1 {
 		r.an.WriteMono(pcm)
 	} else {
@@ -80,6 +105,10 @@ func (r *loopRun) stopSpectrum() {
 	}
 	if r.specStart {
 		s.e.OnSpectrum(spectrum.Event{Kind: spectrum.KindStop, Source: s.opt.Spectrum, Stream: r.specID(), At: time.Now()})
+		if s.opt.Spectrum == spectrum.SourceVoice { // Алиса договорила: вернуть платформе спектр музыки
+			s.e.voiceSpectra.Add(-1)
+			s.e.reannounceMusic()
+		}
 	}
 	r.an = nil
 }

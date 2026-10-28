@@ -39,6 +39,20 @@ func TestPausePlaybackMatchesRealTraffic(t *testing.T) {
 	}
 }
 
+// Текстовый запрос «поставь на паузу» — как в записи mdbg1.pcap (maind --cli, 'q').
+func TestTextInputMatchesRealTraffic(t *testing.T) {
+	want := unhex(t, "e20fb4023a0f416c6963654361706162696c69747942a00208001299020a2463666662383733382d356338302d343233362d383965662d6361306334306265346535381299017b226173725f726573756c74223a5b5d2c2261747461636865645f66696c6573223a5b5d2c2274657874223a225c75303433665c75303433655c75303434315c75303434325c75303433305c75303433325c7530343463205c75303433645c7530343330205c75303433665c75303433305c75303434335c75303433375c7530343433222c2274797065223a22746578745f696e707574227d18002001280030003a2c080210031801222430313065633137372d616166662d346565632d396363612d383939363039386632383632400048005000580060017a008201008a0100900101980100a00101aa0100ca01001800e80fd201")
+	got := TextInput("cffb8738-5c80-4236-89ef-ca0c40be4e58", "010ec177-aaff-4eec-9cca-8996098f2862", "поставь на паузу")
+	if !bytes.Equal(got, want) {
+		t.Fatalf("TextInput:\n получили %x\n ждали    %x", got, want)
+	}
+	bs := `\`
+	wantJS := `"a` + bs + `"` + bs + bs + bs + "ud83d" + bs + "ude00" + `"`
+	if s := jsonASCII("a\"\\" + string(rune(0x1F600))); s != wantJS {
+		t.Fatalf("экранирование: %s, ждали %s", s, wantJS)
+	}
+}
+
 // Кадры maind --cli ('p', 'n', 'l' и регистрация клиента), запись 28.10.2026.
 func TestPlaybackCommandsMatchRealTraffic(t *testing.T) {
 	for _, c := range []struct {

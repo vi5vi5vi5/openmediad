@@ -116,6 +116,15 @@ func (f *fakeClient) HideTransport(dests []string, path dbus.ObjectPath) error {
 	f.rec(fmt.Sprintf("hide %s %v", path, dests))
 	return nil
 }
+func (f *fakeClient) Disconnect(_ context.Context, dev dbus.ObjectPath) error {
+	f.rec("disconnect " + string(dev))
+	go f.disconnect()
+	return nil
+}
+func (f *fakeClient) ShowTransport(_ context.Context, dests []string, path dbus.ObjectPath) error {
+	f.rec(fmt.Sprintf("show %s %v", path, dests))
+	return nil
+}
 func (f *fakeClient) ForgetTransport(dests []string, path dbus.ObjectPath) error {
 	f.rec(fmt.Sprintf("forget %s %v", path, dests))
 	return nil
@@ -156,6 +165,7 @@ func (f *fakeClient) Close() { f.mu.Lock(); f.closed = true; f.mu.Unlock() }
 
 type fakeMaster struct {
 	mu      sync.Mutex
+	sets    []int
 	cur     int
 	changes chan struct{}
 	closed  bool
@@ -167,7 +177,18 @@ func (m *fakeMaster) Level() (int, int, bool) {
 	return m.cur, 255, !m.closed
 }
 func (m *fakeMaster) Changes() <-chan struct{} { return m.changes }
-func (m *fakeMaster) Close()                   { m.mu.Lock(); m.closed = true; m.mu.Unlock() }
+func (m *fakeMaster) Set(v int) error {
+	m.mu.Lock()
+	m.sets = append(m.sets, v)
+	m.cur = v
+	m.mu.Unlock()
+	select { // как ядро: событие о своей же записи тоже приходит
+	case m.changes <- struct{}{}:
+	default:
+	}
+	return nil
+}
+func (m *fakeMaster) Close() { m.mu.Lock(); m.closed = true; m.mu.Unlock() }
 func (m *fakeMaster) set(v int) {
 	m.mu.Lock()
 	m.cur = v
@@ -267,8 +288,9 @@ func TestDeviceFilter(t *testing.T) {
 	}
 }
 
-// Громкость наушников повторяет громкость колонки: при подключении BlueALSA переходит на свою громкость, дальше —
-// каждое изменение Master.
+// Громкость наушников повторяет громкость колонки: при подключении громкость уходит на сами наушники (без программной в
+// BlueALSA) и выравнивается по колонке; дальше, пока транспорт спрятан от платформы, Master повторяет движок, а когда
+// канал включился и транспорт ей показан, — она сама (движок не пишет, иначе спорил бы с ней и с колесом наушников).
 func TestVolumeFollowsSpeaker(t *testing.T) {
 	fc := newFakeClient()
 	m := &fakeMaster{cur: 46, changes: make(chan struct{}, 1)}
@@ -276,8 +298,8 @@ func TestVolumeFollowsSpeaker(t *testing.T) {
 	start(t, s, fc, m)
 	fc.connect(hp, hpPath())
 	waitFor(t, "громкость при подключении", func() bool { return fc.has("volume 13") == 1 }) // Master 46 = уровень 2 из 20
-	if fc.has("soft true") != 1 {
-		t.Fatalf("BlueALSA должна взять громкость на себя: %v", fc.calls)
+	if fc.has("soft false") != 1 || fc.has("soft true") != 0 {
+		t.Fatalf("громкость — на самих наушниках: %v", fc.calls)
 	}
 	m.set(68)
 	// Master 68 = уровень 4
@@ -287,12 +309,21 @@ func TestVolumeFollowsSpeaker(t *testing.T) {
 	if n := fc.has("volume "); n != 2 {
 		t.Fatalf("вызовов громкости %d, ждали 2: %v", n, fc.calls)
 	}
+	fc.transport(dbus.ObjectPath(string(hpPath())+"/sep1/fd7"), "active") // канал включился — транспорт показан платформе
+	waitFor(t, "показан", func() bool { return fc.has("show") == 1 })
+	m.set(103)
+	time.Sleep(50 * time.Millisecond)
+	if n := fc.has("volume "); n != 2 {
+		t.Fatalf("громкость ведёт платформа — движок не пишет: %v", fc.calls)
+	}
 	s.Stop()
 	if !m.closed {
 		t.Fatal("слежение за громкостью закрывается при остановке")
 	}
 }
 
+// Режим headphones: громкость только на наушниках — Master не повторяется, транспорт от платформы остаётся спрятанным и
+// включённым (она не связывает громкость наушников с колонкой).
 func TestVolumeHeadphonesModeLeavesVolumeAlone(t *testing.T) {
 	fc := newFakeClient()
 	m := &fakeMaster{cur: 46, changes: make(chan struct{}, 1)}
@@ -302,9 +333,10 @@ func TestVolumeHeadphonesModeLeavesVolumeAlone(t *testing.T) {
 	start(t, s, fc, nil)
 	fc.connect(hp, hpPath())
 	waitFor(t, "выход доступен", s.Available)
-	time.Sleep(20 * time.Millisecond)
-	if opened || fc.has("volume") != 0 || fc.has("soft") != 0 {
-		t.Fatalf("в режиме headphones громкость не трогается: %v", fc.calls)
+	fc.transport(dbus.ObjectPath(string(hpPath())+"/sep1/fd7"), "active")
+	time.Sleep(30 * time.Millisecond)
+	if opened || fc.has("volume") != 0 || fc.has("soft true") != 0 || fc.has("show") != 0 || fc.has("forget") != 1 {
+		t.Fatalf("в режиме headphones громкость не трогается и платформе не показывается: %v", fc.calls)
 	}
 }
 
@@ -354,6 +386,23 @@ func TestLoadVolumeMap(t *testing.T) {
 	if _, err := LoadVolumeMap(filepath.Join(dir, "нет")); err == nil {
 		t.Error("нет файла — ошибка")
 	}
+}
+
+// Подключён телефон (звук с него на колонку) — наушники колонка сама не подключает: это выбило бы телефон.
+func TestNoReconnectWhilePhoneConnected(t *testing.T) {
+	fc := newFakeClient()
+	fc.state.PCMs = append(fc.state.PCMs, bluez.PCM{Path: "/org/bluealsa/hci0/dev_CC/a2dpsnk/source", Address: "CC:FF:90:DD:63:86",
+		Transport: "A2DP-sink", Mode: "source"})
+	s := &Sink{Device: hp, Reconnect: 10 * time.Millisecond}
+	start(t, s, fc, nil)
+	time.Sleep(60 * time.Millisecond)
+	if fc.has("connect") != 0 {
+		t.Fatalf("телефон подключён — наушники не подключаем: %v", fc.calls)
+	}
+	fc.mu.Lock()
+	fc.state.PCMs = nil // телефон отключился
+	fc.mu.Unlock()
+	waitFor(t, "после телефона — подключаем", func() bool { return fc.has("connect ") >= 1 })
 }
 
 // Выбранные наушники не подключены: колонка сама пробует их подключить (когда Bluetooth «выключен», они не могут сами).
@@ -460,8 +509,9 @@ func TestChannelFollowsHeadphones(t *testing.T) {
 }
 
 // Транспорт наушников платформе (всем её соединениям) адресно «удаляется», как только появился, — раньше, чем открывается
-// канал, который его включит; тогда платформа его включения не видит. Один раз на путь; телефон не трогается.
-// Переподключение (тот же путь) и перезапуск платформы — заново; уже активный транспорт сначала «простаивает».
+// канал, который его включит; когда канал включил его, — возвращается простаивающим (чтобы она видела громкость наушников).
+// Канал закрылся — снова «удалён», до нового включения. Телефон не трогается. Переподключение (тот же путь) — заново;
+// перезапуск платформы при открытом канале — «простаивает».
 func TestHidesHeadphoneTransportFromPlatform(t *testing.T) {
 	fc := newFakeClient()
 	fc.state.Transports = append(fc.state.Transports, bluez.Transport{Path: "/org/bluez/hci0/dev_CC/sep2/fd1", Device: "/org/bluez/hci0/dev_CC",
@@ -480,28 +530,31 @@ func TestHidesHeadphoneTransportFromPlatform(t *testing.T) {
 	if f, o := fc.index("forget"), fc.index("open"); f > o {
 		t.Fatalf("платформа должна забыть транспорт раньше, чем канал его включит: %v", fc.calls)
 	}
-	if fc.has("hide") != 0 || fc.has("forget /org/bluez/hci0/dev_CC") != 0 {
-		t.Fatalf("простаивающему — без «простаивает», телефон не трогается: %v", fc.calls)
+	if fc.has("hide") != 0 || fc.has("show") != 0 || fc.has("forget /org/bluez/hci0/dev_CC") != 0 {
+		t.Fatalf("простаивающему — только «удалён», телефон не трогается: %v", fc.calls)
 	}
-	fc.transport(tr, "active") // канал включил транспорт — платформа его уже не знает, повторять нечего
+	fc.transport(tr, "active") // канал включил транспорт — вернуть его платформе простаивающим
+	waitFor(t, "показан простаивающим", func() bool { return fc.has("show "+string(tr)+" [:1.5 :1.6]") == 1 })
 	fc.changes <- struct{}{}
 	time.Sleep(30 * time.Millisecond)
-	if fc.has("forget") != 1 || fc.has("hide") != 0 {
+	if fc.has("forget") != 1 || fc.has("show") != 1 || fc.has("hide") != 0 {
 		t.Fatalf("сообщено лишнее: %v", fc.calls)
 	}
-	// переподключение: тот же путь транспорта появляется снова — платформе сообщается заново
+	fc.transport(tr, "idle") // канал закрылся — до нового включения платформа должна снова забыть транспорт
+	waitFor(t, "снова забыт", func() bool { return fc.has("forget") == 2 })
+	fc.transport(tr, "active")
+	waitFor(t, "снова показан", func() bool { return fc.has("show") == 2 })
+	// переподключение: тот же путь транспорта появляется снова — всё заново
 	fc.disconnect()
 	waitFor(t, "отключены", func() bool { return !s.Available() })
 	fc.connect(hp, hpPath())
-	waitFor(t, "забыт после переподключения", func() bool { return fc.has("forget") == 2 })
-	// платформа перезапустилась и перечитала объекты; транспорт уже активен — сначала «простаивает», потом «удалён»
+	waitFor(t, "забыт после переподключения", func() bool { return fc.has("forget") == 3 })
+	// платформа перезапустилась и перечитала объекты при открытом канале — «простаивает»
 	fc.transport(tr, "active")
+	waitFor(t, "показан", func() bool { return fc.has("show") == 3 })
 	pid.Store(2000)
 	fc.changes <- struct{}{}
-	waitFor(t, "забыт новой платформой", func() bool { return fc.has("forget "+string(tr)+" [:1.9]") == 1 })
-	if fc.has("hide "+string(tr)+" [:1.9]") != 1 || fc.index("hide") > fc.index("forget "+string(tr)+" [:1.9]") {
-		t.Fatalf("активный транспорт: сначала «простаивает»: %v", fc.calls)
-	}
+	waitFor(t, "новой платформе — «простаивает»", func() bool { return fc.has("hide "+string(tr)+" [:1.9]") == 1 })
 	if st := s.DebugState().(State); st.Hidden != 3 {
 		t.Fatalf("счётчик %d", st.Hidden)
 	}
@@ -514,7 +567,7 @@ func TestNoHideWithoutPlatform(t *testing.T) {
 	fc.connect(hp, hpPath())
 	fc.transport(dbus.ObjectPath(string(hpPath())+"/sep1/fd7"), "active")
 	time.Sleep(50 * time.Millisecond)
-	if fc.has("hide") != 0 || fc.has("forget") != 0 {
+	if fc.has("hide") != 0 || fc.has("forget") != 0 || fc.has("show") != 0 {
 		t.Fatal("платформы нет — сообщать некому")
 	}
 }
@@ -523,4 +576,62 @@ func TestALSADevice(t *testing.T) {
 	if d := bluez.ALSADevice(hp); d != "plug:'bluealsa:DEV=C0:DA:5E:53:03:B1,PROFILE=a2dp'" {
 		t.Fatalf("устройство %q", d)
 	}
+}
+
+// Пока подключены наушники, громкость динамиков удерживается: платформа меняет уровень (он уходит наушникам), а Master
+// возвращается. Наушники отключились — платформе сообщается громкость, равная уровню динамиков.
+func TestHoldsSpeakerVolumeWhileHeadphones(t *testing.T) {
+	fc := newFakeClient()
+	m := &fakeMaster{cur: 46, changes: make(chan struct{}, 1)} // уровень 2
+	var levels []int
+	var lmu sync.Mutex
+	s := &Sink{Volume: VolumeSpeaker, HoldSpeaker: true, PlatformLevel: func(l int) error {
+		lmu.Lock()
+		levels = append(levels, l)
+		lmu.Unlock()
+		return nil
+	}}
+	start(t, s, fc, m)
+	fc.connect(hp, hpPath())
+	tr := dbus.ObjectPath(string(hpPath()) + "/sep1/fd7")
+	waitFor(t, "спрятан", func() bool { return fc.has("forget") == 1 })
+	fc.transport(tr, "active")
+	waitFor(t, "показан платформе", func() bool { return fc.has("show") == 1 })
+	m.set(115) // платформа: уровень 8 (колесо наушников)
+	waitFor(t, "громкость динамиков возвращена", func() bool {
+		m.mu.Lock()
+		defer m.mu.Unlock()
+		return len(m.sets) == 1 && m.sets[0] == 46 && m.cur == 46
+	})
+	fc.disconnect()
+	waitFor(t, "уровень динамиков возвращён платформе", func() bool {
+		lmu.Lock()
+		defer lmu.Unlock()
+		return len(levels) == 1 && levels[0] == 2
+	})
+	m.set(68) // без наушников — Master не удерживается
+	time.Sleep(30 * time.Millisecond)
+	m.mu.Lock()
+	n := len(m.sets)
+	m.mu.Unlock()
+	if n != 1 {
+		t.Fatalf("после отключения громкость динамиков не трогаем: %v", m.sets)
+	}
+}
+
+// «Выключи блютуз» отключает наушники и останавливает их автоподключение; «включи» — возвращает.
+func TestPlatformBluetoothSwitch(t *testing.T) {
+	fc := newFakeClient()
+	s := &Sink{Device: hp, Reconnect: 15 * time.Millisecond}
+	start(t, s, fc, nil)
+	fc.connect(hp, hpPath())
+	waitFor(t, "подключены", s.Available)
+	s.PlatformBluetooth(false)
+	waitFor(t, "отключены", func() bool { return fc.has("disconnect "+string(hpPath())) == 1 && !s.Available() })
+	time.Sleep(60 * time.Millisecond)
+	if fc.has("connect ") != 0 {
+		t.Fatalf("после «выключи блютуз» сами не подключаем: %v", fc.calls)
+	}
+	s.PlatformBluetooth(true)
+	waitFor(t, "подключаем снова", func() bool { return fc.has("connect ") >= 1 })
 }

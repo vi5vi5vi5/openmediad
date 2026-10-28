@@ -118,11 +118,17 @@ type Engine struct {
 	// OnSpectrum (необязательный) получает кадры спектра и смены состояния его потоков. Вызывается из цикла вывода:
 	// обработчик должен быстро возвращаться и копировать кадр, если хранит его.
 	OnSpectrum func(spectrum.Event)
+	// SpectrumAlways — показывать спектр музыки всё время, пока она играет (настройка spectrum.always). Платформа рисует
+	// спектр 15 с после «начат» (её облачная настройка) и гасит после ответа Алисы (последним был поток голоса), поэтому
+	// поток спектра музыки объявляется заново: раз в spectrumRefresh, после голоса и после конца приглушения.
+	SpectrumAlways bool
 
 	gains [numClasses]atomic.Uint64 // громкость класса (биты float64); 0 — ещё не задана, то есть 1
 
 	mu   sync.Mutex
 	live map[*Stream]struct{} // потоки до Close (для Reroute)
+
+	voiceSpectra atomic.Int32 // открытых потоков спектра голоса: пока Алиса говорит, спектр музыки не объявляется
 }
 
 func (e *Engine) now() time.Time {
@@ -141,7 +147,34 @@ func (e *Engine) logf(f string, a ...any) {
 // SetClassGain задаёт громкость класса (1 — как есть; меньше — приглушение). Звучащие потоки переходят к ней плавно.
 func (e *Engine) SetClassGain(c Class, g float64) {
 	if c >= 0 && c < numClasses {
+		prev := e.ClassGain(c)
 		e.gains[c].Store(math.Float64bits(g))
+		if c == Music && g >= 1 && prev < 1 { // диалог кончился, музыка снова в полную силу
+			e.reannounceMusic()
+		}
+	}
+}
+
+// reannounceMusic объявляет заново потоки спектра играющей музыки (SpectrumAlways): платформа снова рисует её спектр.
+func (e *Engine) reannounceMusic() {
+	if !e.SpectrumAlways || e.OnSpectrum == nil {
+		return
+	}
+	e.mu.Lock()
+	var list []*Stream
+	for s := range e.live {
+		if s.class == Music && s.opt.Spectrum == spectrum.SourceMusic {
+			list = append(list, s)
+		}
+	}
+	e.mu.Unlock()
+	for _, s := range list {
+		s.mu.Lock()
+		id, playing := s.specID, s.playing && !s.closed
+		s.mu.Unlock()
+		if id != 0 && playing {
+			e.OnSpectrum(spectrum.Event{Kind: spectrum.KindStart, Source: spectrum.SourceMusic, Stream: id, At: time.Now()})
+		}
 	}
 }
 

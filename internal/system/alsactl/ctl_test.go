@@ -3,6 +3,7 @@ package alsactl
 import (
 	"encoding/binary"
 	"errors"
+	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -62,6 +63,7 @@ type fakeControl struct {
 	events chan []byte
 	closed chan struct{}
 	once   sync.Once
+	writes []string
 }
 
 func newFakeControl() *fakeControl {
@@ -84,11 +86,38 @@ func (f *fakeControl) readInt(name string) (int, error) {
 	}
 	return v, nil
 }
-func (f *fakeControl) info(name string) (int, int, error) {
+func (f *fakeControl) info(name string) (int, int, int, error) {
 	if _, err := f.readInt(name); err != nil {
-		return 0, 0, err
+		return 0, 0, 0, err
 	}
-	return 0, 255, nil
+	return 0, 255, 2, nil
+}
+func (f *fakeControl) writeInt(name string, v, count int) error {
+	f.mu.Lock()
+	f.writes = append(f.writes, fmt.Sprintf("%s=%d×%d", name, v, count))
+	f.mu.Unlock()
+	f.set(name, v)
+	return nil
+}
+
+// Set пишет во все каналы регулятора, и изменение приходит как обычное событие.
+func TestWatchSet(t *testing.T) {
+	f := newFakeControl()
+	w, err := newWatch(f, "Master")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer w.Close()
+	if err := w.Set(80); err != nil {
+		t.Fatal(err)
+	}
+	<-w.Changes()
+	if cur, _, _ := w.Level(); cur != 80 || f.writes[0] != "Master=80×2" {
+		t.Fatalf("уровень %d, записи %v", cur, f.writes)
+	}
+	if w.Set(300) == nil || w.Set(-1) == nil {
+		t.Fatal("вне пределов — ошибка")
+	}
 }
 func (f *fakeControl) subscribe() error { return nil }
 func (f *fakeControl) read(p []byte) (int, error) {

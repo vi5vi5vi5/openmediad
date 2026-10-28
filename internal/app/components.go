@@ -29,6 +29,8 @@ type (
 	debugStater  interface{ DebugState() any }
 	// arrivalNotifier — выход, который сообщает, что стал доступен (подключились наушники).
 	arrivalNotifier interface{ OnArrival(func()) }
+	// bluetoothSwitch — компонент, которому важно «включи / выключи блютуз» платформы.
+	bluetoothSwitch interface{ PlatformBluetooth(on bool) }
 )
 
 // componentOn — включён ли компонент сборки в настройках.

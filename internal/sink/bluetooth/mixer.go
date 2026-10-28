@@ -69,7 +69,9 @@ func (m *mixer) loop() {
 		for _, in := range m.ins {
 			in.mixInto(acc)
 			if in.finished() {
-				in.state = inDone
+				if in.state == inDraining {
+					in.state = inDone
+				}
 				continue
 			}
 			live = append(live, in)
@@ -172,7 +174,7 @@ func (in *mixInput) Write(p []byte) (int, error) {
 		switch {
 		case m.err != nil:
 			return 0, m.err
-		case in.state == inAborted:
+		case in.state == inAborted, in.state == inDone:
 			return 0, errors.New("поток наушников оборван")
 		}
 		room := inputBytes - len(in.buf)

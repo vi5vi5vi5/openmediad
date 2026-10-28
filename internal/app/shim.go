@@ -74,12 +74,34 @@ func (dd *dedup) seen(frame []byte) bool {
 	return false
 }
 
-// watchAliced подключает к журналу диалог Алисы: что услышала, думает ли, говорит ли. Только чтение. Включается вместе с
-// отладочным портом: в журнал попадают распознанные фразы.
-func (d *daemon) watchAliced(ctx context.Context) {
+// watchAliced следит за диалогом Алисы (только чтение): директивы ответа (выключить или включить Bluetooth) уходят
+// компонентам, а журнал (что услышала, думает ли, говорит ли) — только с отладочным портом: в него попадают распознанные
+// фразы.
+func (d *daemon) watchAliced(ctx context.Context, logLines bool) {
+	var lastKey string
+	var lastAt time.Time
 	o := &observe.Observer{
 		Targets: []observe.Target{{Name: "aliced", Addr: "127.0.0.1:9875"}},
+		OnReply: func(req string, directives []string) {
+			// ответ приходит в нескольких состояниях Алисы; номер запроса бывает пустым (stop_bluetooth)
+			key := req + " " + strings.Join(directives, ",")
+			if key == lastKey && time.Since(lastAt) < 5*time.Second {
+				return
+			}
+			lastKey, lastAt = key, time.Now()
+			for _, name := range directives {
+				switch {
+				case strings.HasPrefix(name, "stop_bluetooth"):
+					d.platformBluetooth(false)
+				case strings.HasPrefix(name, "start_bluetooth"):
+					d.platformBluetooth(true)
+				}
+			}
+		},
 		OnLine: func(who, text string) {
+			if !logLines {
+				return
+			}
 			lvl, why := journal.Info, ""
 			switch {
 			case strings.HasPrefix(text, "AliceState"):
@@ -104,4 +126,16 @@ func (d *daemon) watchAliced(ctx context.Context) {
 		},
 	}
 	go o.Run(ctx)
+}
+
+// platformBluetooth передаёт компонентам «включи / выключи блютуз» (наушники отключаются и не подключаются сами).
+func (d *daemon) platformBluetooth(on bool) {
+	d.mu.Lock()
+	comps := d.comps
+	d.mu.Unlock()
+	for _, c := range comps {
+		if b, ok := c.obj.(bluetoothSwitch); ok {
+			b.PlatformBluetooth(on)
+		}
+	}
 }

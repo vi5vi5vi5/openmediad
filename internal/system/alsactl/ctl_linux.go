@@ -18,7 +18,7 @@ type devControl struct{ f *os.File }
 // при открытии — открытый через os.OpenFile файл так и не просыпался бы (проверено на колонке 28.10.2026).
 func openControl(card int) (control, error) {
 	path := fmt.Sprintf("/dev/snd/controlC%d", card)
-	fd, err := syscall.Open(path, syscall.O_RDONLY|syscall.O_CLOEXEC, 0)
+	fd, err := syscall.Open(path, syscall.O_RDWR|syscall.O_CLOEXEC, 0)
 	if err != nil {
 		return nil, &os.PathError{Op: "open", Path: path, Err: err}
 	}
@@ -65,21 +65,37 @@ func (c *devControl) readInt(name string) (int, error) {
 	return int(int64(binary.LittleEndian.Uint64(b[valueDataOff:]))), nil
 }
 
-func (c *devControl) info(name string) (min, max int, err error) {
+func (c *devControl) info(name string) (min, max, count int, err error) {
 	var b [infoSize]byte
 	if err := putID(b[:], name); err != nil {
-		return 0, 0, err
+		return 0, 0, 0, err
 	}
 	if err := c.ioctl(ioctlInfo, unsafe.Pointer(&b[0])); err != nil {
 		if err == syscall.ENOENT {
-			return 0, 0, ErrNoControl
+			return 0, 0, 0, ErrNoControl
 		}
-		return 0, 0, fmt.Errorf("alsactl: сведения о %q: %w", name, err)
+		return 0, 0, 0, fmt.Errorf("alsactl: сведения о %q: %w", name, err)
 	}
-	if binary.LittleEndian.Uint32(b[infoTypeOff:]) != typeInteger || binary.LittleEndian.Uint32(b[infoCountOff:]) == 0 {
-		return 0, 0, ErrNoControl
+	count = int(binary.LittleEndian.Uint32(b[infoCountOff:]))
+	if binary.LittleEndian.Uint32(b[infoTypeOff:]) != typeInteger || count == 0 {
+		return 0, 0, 0, ErrNoControl
 	}
-	return int(int64(binary.LittleEndian.Uint64(b[infoMinOff:]))), int(int64(binary.LittleEndian.Uint64(b[infoMaxOff:]))), nil
+	return int(int64(binary.LittleEndian.Uint64(b[infoMinOff:]))), int(int64(binary.LittleEndian.Uint64(b[infoMaxOff:]))), count, nil
+}
+
+// writeInt пишет значение v во все count каналов регулятора (value.integer.value[i] — long).
+func (c *devControl) writeInt(name string, v, count int) error {
+	var b [valueSize]byte
+	if err := putID(b[:], name); err != nil {
+		return err
+	}
+	for i := 0; i < count && valueDataOff+8*(i+1) <= valueSize; i++ {
+		binary.LittleEndian.PutUint64(b[valueDataOff+8*i:], uint64(int64(v)))
+	}
+	if err := c.ioctl(ioctlWrite, unsafe.Pointer(&b[0])); err != nil {
+		return fmt.Errorf("alsactl: запись %q: %w", name, err)
+	}
+	return nil
 }
 
 func (c *devControl) subscribe() error { return nil } // подписка — уже при открытии
