@@ -17,12 +17,13 @@ import (
 // Config — секция [spectrum].
 type Config struct {
 	config.Toggle
-	Delay time.Duration `conf:"delay"` // задержка кадров относительно передачи звука в aplay
+	Delay time.Duration `conf:"delay"` // через сколько после передачи aplay звук прозвучит: метка времени кадра = расчёт + delay
 }
 
 const template = `[spectrum]               # спектр звука для дисплея и подсветки (сервис iohub)
 enabled = true
-delay = "300ms"          # задержка кадров спектра относительно передачи звука в aplay`
+delay = "300ms"          # через сколько после передачи в aplay звук слышен: кадр уходит сразу с меткой «расчёт + delay»;
+                         # анимация отстаёт от звука — уменьшить, опережает — увеличить (разумно 200–500ms)`
 
 func init() {
 	registry.Register(registry.Component{

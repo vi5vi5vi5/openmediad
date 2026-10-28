@@ -29,6 +29,7 @@ type CommandInfo struct {
 	Size   int    // размер команды, Б
 	Reason string
 	File   string // для file-start: путь к звуковому файлу (системные звуки не секрет)
+	Loops  bool   // для file-start: файл звучит по кругу до release (звонок), иначе играет один раз
 }
 
 // InfoOfCommand разбирает команду плееру.
@@ -44,6 +45,7 @@ func InfoOfCommand(c msg.AudioCommand) CommandInfo {
 	}
 	if ci.Kind == msg.CmdFileStart {
 		ci.File, _ = c.FilePath()
+		ci.Loops = c.FileLoops()
 	}
 	return ci
 }
@@ -79,6 +81,7 @@ func (ci CommandInfo) Data() map[string]any {
 	}
 	if ci.File != "" {
 		d["file"] = ci.File
+		d["file_loops"] = ci.Loops
 	}
 	return d
 }
@@ -112,6 +115,9 @@ func (ci CommandInfo) Explain() (text, why string) {
 	case msg.CmdRelease:
 		return "освобождение плеера " + short(ci.Player.ID), "Плеер больше не нужен. Для голоса Алисы это нормальный конец фразы."
 	case msg.CmdFileStart:
+		if !ci.Loops {
+			return "системный звук: " + path.Base(ci.File), "Одноразовый звук (после «Алиса», щелчок громкости). Играет настоящий mediad и сам сообщает о конце, шим только пропускает кадры."
+		}
 		return "звонок: запуск файла " + path.Base(ci.File), "Таймер или будильник просит сыграть системный звук. Играет настоящий mediad (компонент sounds выключен или звонок отдан ему), шим только пропускает кадры."
 	case msg.CmdFocus:
 		if ci.Focus == 1 {
