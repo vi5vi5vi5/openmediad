@@ -12,11 +12,11 @@ import (
 	"syscall"
 	"time"
 
+	"openmediad/internal/core/platform/clock"
+	"openmediad/internal/core/quasar/observe"
+	"openmediad/internal/core/quasar/wire"
 	"openmediad/internal/devtools"
-	"openmediad/internal/quasar/observe"
-	"openmediad/internal/quasar/wire"
-	"openmediad/internal/system/alsactl"
-	"openmediad/internal/system/clock"
+	"openmediad/internal/libs/alsactl"
 )
 
 func observeCmd(args []string) error {

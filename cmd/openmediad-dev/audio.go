@@ -7,11 +7,11 @@ import (
 	"os"
 	"time"
 
-	"openmediad/internal/audio"
-	"openmediad/internal/engine"
-	"openmediad/internal/quasar/mediad"
-	"openmediad/internal/sink/speaker"
-	"openmediad/internal/source/yandex"
+	"openmediad/internal/components/yandex-music"
+	"openmediad/internal/core/audio"
+	"openmediad/internal/core/engine"
+	"openmediad/internal/core/quasar/mediad"
+	"openmediad/internal/core/speaker"
 )
 
 // audioCommands — инструменты звука: проверка цепочек на колонке отдельно от шины и Алисы.
@@ -53,7 +53,7 @@ func playYandex(args []string) error {
 	spk := &speaker.Sink{}
 	eng := &engine.Engine{Router: engine.RouterFunc(func(_ engine.Class, f audio.Format) (audio.Output, error) { return spk.Open(f) }), Logf: logf}
 	ev := &musicEvents{logf: logf, opened: make(chan uint64, 1), failed: make(chan error, 1), finished: make(chan struct{}, 1)}
-	b := &yandex.Backend{Engine: eng, Events: ev, Logf: logf}
+	b := &yandexmusic.Backend{Engine: eng, Events: ev, Logf: logf}
 	defer b.Shutdown()
 
 	b.Open("test", mediad.Track{ID: "test", URL: *url, Key: k, Title: "play-yandex", GainDB: *gain}, *from)

@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	"openmediad/internal/quasar/pb"
-	"openmediad/internal/quasar/wire"
+	"openmediad/internal/core/quasar/pb"
+	"openmediad/internal/core/quasar/wire"
 )
 
 // pcapPacket собирает одну запись classic-pcap: Ethernet + IPv4 + TCP с payload.

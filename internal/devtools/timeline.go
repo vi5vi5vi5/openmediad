@@ -5,11 +5,11 @@ import (
 	"io"
 	"maps"
 
-	"openmediad/internal/quasar/capture"
-	"openmediad/internal/quasar/msg"
-	"openmediad/internal/quasar/observe"
-	"openmediad/internal/quasar/pb"
-	"openmediad/internal/quasar/wire"
+	"openmediad/internal/core/quasar/msg"
+	"openmediad/internal/core/quasar/observe"
+	"openmediad/internal/core/quasar/pb"
+	"openmediad/internal/core/quasar/wire"
+	"openmediad/internal/devtools/capture"
 )
 
 // TimelineOpt — что показывать на шкале.

@@ -35,16 +35,32 @@ platformd ──9906──► правило iptables ──► openmediad (ши
 Linux и macOS, make и sh не нужны:
 
 ```sh
-go run ./tools/build                         # под колонку (linux/arm64) → dist/openmediad
-go run ./tools/build -list                   # какие компоненты бывают
-go run ./tools/build -without debug,spectrum # убрать компоненты
-go run ./tools/build -with pprof             # добавить опытные
+go run ./tools/build                         # профиль standard под колонку (linux/arm64) → dist/openmediad
+go run ./tools/build -profile core           # только ядро (прозрачный посредник)
+go run ./tools/build -profile full           # все готовые компоненты, включая опытные
+go run ./tools/build -with bt-out            # профиль + компонент
+go run ./tools/build -without debug-page     # профиль − компонент
+go run ./tools/build -list                   # компоненты с паспортами
 go run ./tools/build -deploy 192.168.1.12    # собрать и залить на колонку (ssh, порт 2222) в /tmp/openmediad/
 ```
 
-Компоненты включаются в бинарник на этапе сборки, а включённые в сборку можно ещё выключать в настройках.
-По умолчанию в сборке: `yandex` (музыка), `tts` (голос Алисы), `sounds` (звонки), `spectrum` (дисплей),
-`debug` (отладочная страница на порту 6701). Опытные: `bluetooth` (вывод в Bluetooth-наушники), `pprof`.
+Проект устроен в три зоны: **ядро** (`internal/core` — без него движок не существует), **компоненты** (`internal/components` —
+опциональные возможности) и **общие библиотеки** для компонентов (`internal/libs`). Компоненты включаются в бинарник на этапе сборки,
+а включённые в сборку можно ещё выключать в настройках. У каждого компонента есть паспорт: класс, входит ли в сборку по умолчанию,
+что требует от прошивки и от других компонентов, что будет, если его убрать.
+
+| Компонент | Что делает | Класс | В сборке по умолчанию |
+|---|---|---|---|
+| `yandex-music` | музыка Яндекса | необходимый | да |
+| `alice-voice` | голос Алисы | необходимый | да |
+| `system-sounds` | звонки таймеров и будильников, системные звуки | штатный | да |
+| `display-spectrum` | спектр для дисплея и подсветки | штатный | да |
+| `debug-page` | отладочная страница с журналом на порту 6701 | вспомогательный | да |
+| `debug-profiler` | профилировщик Go на порту отладки | вспомогательный | нет |
+| `bt-out` | вывод звука в Bluetooth-наушники (опытный) | необязательный | нет |
+| `bt-in` | звук с телефона по Bluetooth через движок (опытный) | необязательный | нет |
+
+Подробно — [docs/COMPONENTS.md](docs/COMPONENTS.md).
 
 ## Установка и команды
 
@@ -61,12 +77,12 @@ ssh -p 2222 root@<адрес-колонки>
 |---|---|
 | `openmediad` | помощь и сведения о сборке |
 | `status`, `logs [-f]`, `components` | работает ли, что играет сам, память; журнал; компоненты |
-| `config` | настройки в редакторе (nano/vi) с проверкой; `config set debug.enabled false` — один ключ |
+| `config` | настройки в редакторе (nano/vi) с проверкой; `config set debug-page.enabled false` — один ключ |
 | `start`, `stop`, `restart` | включить или выключить до перезагрузки (колонка продолжает играть штатно) |
 | `install`, `uninstall [-purge]` | установить или удалить (rootfs возвращается из бэкапа со сверкой sha256) |
 | `enable`, `disable` | автозапуск при загрузке |
 | `doctor`, `test-sound`, `reboot` | проверка, тестовый сигнал, перезагрузка с корректной остановкой |
-| `bt list`, `bt scan`, `bt pair`, `bt use` | Bluetooth-наушники: поиск, спаривание, выбор для вывода (выход — опытный компонент `bluetooth`, docs/INSTALL.md §9) |
+| `bt list`, `bt scan`, `bt pair`, `bt use` | Bluetooth: поиск, спаривание, выбор наушников. **Команда есть только в сборке с `bt-out` или `bt-in`** (docs/INSTALL.md §9) |
 
 Всё подробно — `openmediad help <команда>` и [docs/INSTALL.md](docs/INSTALL.md).
 
@@ -74,6 +90,8 @@ ssh -p 2222 root@<адрес-колонки>
 
 - [docs/INSTALL.md](docs/INSTALL.md) — установка, настройки, диагностика, удаление.
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — устройство кода: пакеты, компоненты, путь команды от платформы до динамика.
+- [docs/MAP.md](docs/MAP.md) — карта проекта: что в какой папке, сквозные сценарии, «где что менять». В каждой папке кода есть свой `README.md`.
+- [docs/COMPONENTS.md](docs/COMPONENTS.md) — паспорта компонентов (класс, зависимости, что будет, если убрать).
 - [docs/BUS-PROTOCOL.md](docs/BUS-PROTOCOL.md) — протокол плеера на шине Quasar (команды, события, спектр).
 - [PLAN.md](PLAN.md) — план проекта по фазам, решения и бюджет ресурсов.
 - [docs/research/](docs/research/) — разбор шины Quasar и журнал экспериментов, из которых вырос проект.
@@ -83,7 +101,7 @@ ssh -p 2222 root@<адрес-колонки>
 
 ```sh
 go vet ./... && go test ./...             # тесты идут на компьютере без колонки
-go run ./tools/build -check               # собираются ли все наборы компонентов
+go run ./tools/build -check               # собираются ли профили core, standard, full и инструменты разработчика
 go run ./tools/build -host -o dist/openmediad-host
 sudo python3 scripts/dev/simulate.py dist/openmediad-host   # симулятор колонки: start, stop, install, страж
 go run ./tools/build -dev                 # openmediad-dev: разбор записей шины, наблюдатель, обезличивание

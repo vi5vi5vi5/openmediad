@@ -8,7 +8,7 @@ import (
 	"sort"
 	"time"
 
-	"openmediad/internal/quasar/capture"
+	"openmediad/internal/devtools/capture"
 )
 
 // ShimCheck — параметры проверки шима по записи tcpdump с обеими сторонами шима.

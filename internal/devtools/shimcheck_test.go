@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"openmediad/internal/quasar/pb"
-	"openmediad/internal/quasar/wire"
+	"openmediad/internal/core/quasar/pb"
+	"openmediad/internal/core/quasar/wire"
 )
 
 var (

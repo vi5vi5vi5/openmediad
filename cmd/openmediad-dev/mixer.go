@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"time"
 
-	"openmediad/internal/system/alsactl"
+	"openmediad/internal/libs/alsactl"
 )
 
 // mixerCmd — регулятор ALSA через управляющее устройство (как его видит выход Bluetooth): значение, пределы и изменения.

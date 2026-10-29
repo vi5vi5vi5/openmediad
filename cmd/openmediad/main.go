@@ -1,13 +1,16 @@
 // openmediad — медиа-движок для Яндекс Станции Мини 3. Без аргументов печатает помощь и сведения о сборке.
 //
-// Компоненты попадают в бинарник через файлы with_<имя>.go этого каталога: у каждого свой тег сборки
-// (см. internal/registry/catalog.go). Собирать удобнее всего так: go run ./tools/build.
+// Здесь только склейка. Список компонентов (паспорта) подключает пакет catalog, а какие из них войдут в бинарник, решает
+// пакет included по тегам сборки (omd_<имя>). Собирать нужно через tools/build: `go run ./tools/build` (профиль standard);
+// голый `go build` без тегов даст только ядро — прозрачного посредника без компонентов.
 package main
 
 import (
 	"os"
 
-	"openmediad/internal/cli"
+	_ "openmediad/internal/components/catalog"
+	_ "openmediad/internal/components/included"
+	"openmediad/internal/core/cli"
 )
 
 func main() {

@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	"openmediad/internal/quasar/pb"
-	"openmediad/internal/quasar/wire"
+	"openmediad/internal/core/quasar/pb"
+	"openmediad/internal/core/quasar/wire"
 )
 
 func TestDecodePcapSavesVoiceChunks(t *testing.T) {

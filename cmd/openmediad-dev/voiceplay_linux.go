@@ -10,10 +10,10 @@ import (
 	"strings"
 	"time"
 
-	"openmediad/internal/codec/opus"
-	"openmediad/internal/sink/alsa"
-	"openmediad/internal/system/alsactl"
-	"openmediad/internal/system/clock"
+	"openmediad/internal/components/alice-voice/opus"
+	"openmediad/internal/core/platform/clock"
+	"openmediad/internal/core/speaker/aplay"
+	"openmediad/internal/libs/alsactl"
 )
 
 // voicePlay проигрывает Ogg/Opus-файл (стандин чанка голоса Алисы) через связку «Go-декодер → pipe → aplay»
@@ -24,7 +24,7 @@ import (
 // Что слышно в динамике после trigger, этой цифрой не измеряется (см. PLAN, §14).
 func voicePlay(args []string) error {
 	fs := flag.NewFlagSet("voice-play", flag.ExitOnError)
-	var cfg alsa.Config
+	var cfg aplay.Config
 	fs.StringVar(&cfg.Path, "aplay", "/usr/bin/aplay", "путь к aplay")
 	fs.StringVar(&cfg.Device, "dev", "default", "ALSA-устройство")
 	fs.IntVar(&cfg.Channels, "ch", 1, "каналов у aplay (моно: стерео делает plug ALSA)")
@@ -97,12 +97,12 @@ type result struct {
 
 func since(t0 int64) time.Duration { return time.Duration(clock.Mono() - t0) }
 
-func playOnce(st *opus.Stream, data []byte, cfg alsa.Config, prespawn bool, chunk int) (result, error) {
+func playOnce(st *opus.Stream, data []byte, cfg aplay.Config, prespawn bool, chunk int) (result, error) {
 	var r result
-	var p *alsa.Player
+	var p *aplay.Player
 	var err error
 	if prespawn {
-		if p, err = alsa.Start(cfg); err != nil {
+		if p, err = aplay.Start(cfg); err != nil {
 			return r, err
 		}
 		time.Sleep(300 * time.Millisecond) // aplay успевает открыть PCM и встать на чтение stdin
@@ -111,7 +111,7 @@ func playOnce(st *opus.Stream, data []byte, cfg alsa.Config, prespawn bool, chun
 	t0 := clock.Mono()
 	trig := watchTrigger(t0, stop)
 	if !prespawn {
-		if p, err = alsa.Start(cfg); err != nil {
+		if p, err = aplay.Start(cfg); err != nil {
 			close(stop)
 			return r, err
 		}
