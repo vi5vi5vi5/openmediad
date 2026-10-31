@@ -94,6 +94,7 @@ ssh -p 2222 root@<адрес-колонки>
 - [docs/COMPONENTS.md](docs/COMPONENTS.md) — паспорта компонентов (класс, зависимости, что будет, если убрать).
 - [docs/BUS-PROTOCOL.md](docs/BUS-PROTOCOL.md) — протокол плеера на шине Quasar (команды, события, спектр).
 - [PLAN.md](PLAN.md) — план проекта по фазам, решения и бюджет ресурсов.
+- [docs/MUSIC-PLAN.md](docs/MUSIC-PLAN.md) — план подключения Spotify и других сервисов: варианты и опыты.
 - [docs/research/](docs/research/) — разбор шины Quasar и журнал экспериментов, из которых вырос проект.
 - [THIRD_PARTY.md](THIRD_PARTY.md) — сторонний код и лицензии.
 
