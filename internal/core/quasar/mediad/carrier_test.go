@@ -278,3 +278,30 @@ func TestPlatformPauseWhileReplacingTheLaunchIsNotPassedOn(t *testing.T) {
 		t.Fatalf("пауза вне окна не дошла до источника: %v", cmds)
 	}
 }
+
+// Яндекс стоит на паузе, но платформа считает его сессию текущей (дисплей показывает паузу): Spotify занимает и её.
+func TestTakeOverAlsoTakesPausedYandexSession(t *testing.T) {
+	r := newRig(t)
+	r.m.Handle(nil, playCmd(yandexPlayer, yandexTrack, 0))
+	r.advance(2 * time.Second)
+	r.m.Pause(yandexPlayer)
+	r.advance(time.Second)
+	r.m.SetVirtual(vtrack(true))
+	n := len(r.events())
+	if got := r.m.TakeOver(); got != 0 {
+		t.Fatalf("играющих плееров не было, а TakeOver вернул %d", got)
+	}
+	var playing bool
+	for _, g := range r.events()[n:] {
+		if g.player() != yandexPlayer {
+			t.Fatalf("событие под чужим id %s", g.player())
+		}
+		playing = playing || g.kind() == 1 && g.state() == msg.PlayState(3) && eventTitle(g) == "Песня"
+	}
+	if !playing {
+		t.Fatalf("платформа не увидела Spotify под плеером Яндекса на паузе: %v", r.states())
+	}
+	if r.m.TakeOver() != 0 || r.m.isVirtual(yandexPlayer) == false {
+		t.Fatal("второй вызов что-то сломал")
+	}
+}

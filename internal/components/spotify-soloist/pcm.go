@@ -15,6 +15,7 @@ import (
 	"openmediad/internal/core/engine"
 	"openmediad/internal/core/spectrum"
 	"openmediad/internal/libs/pcmstream"
+	"openmediad/internal/libs/resample"
 )
 
 // Протокол сокета шима (подробно — в шапке shim/libpulse_shim.c): привет «OMDP», версия, каналы, частота; затем кадры
@@ -26,6 +27,7 @@ const (
 	frVolume = 0x04 // 2 байта: усиление в тысячных (для сведения)
 
 	maxFrame     = 1 << 20
+	engineRate   = 48000 // частота потока в движке (см. handle)
 	helloVersion = 1
 
 	// Сколько звука держим между сокетом и движком. Чем меньше, тем быстрее пауза и перемотка, чем больше, тем устойчивее
@@ -190,6 +192,9 @@ func (s *pcmServer) status() pcmStatus {
 		st.Playing = st.Playing || ss.isPlaying()
 		st.BufferedB += ss.src.Buffered()
 		st.Format = fmt.Sprintf("%d Гц, %d кан.", ss.f.Rate, ss.f.Channels)
+		if ss.rs != nil {
+			st.Format += fmt.Sprintf(" → %d Гц", engineRate)
+		}
 	}
 	return st
 }
@@ -219,7 +224,19 @@ func (s *pcmServer) handle(conn net.Conn) {
 	s.connects++
 	s.mu.Unlock()
 
-	ss := &session{srv: s, id: id, conn: conn, f: f, src: pcmstream.New(f, maxBuffered, history), corked: true}
+	// В движок звук идёт в 48 кГц: так играет вся платформа, и только такой формат принимает смеситель наушников (bt-out). Spotify
+	// декодирует в 44,1 кГц, поэтому он пересчитывается здесь.
+	out := f
+	var rs *resample.Resampler
+	if f.Rate != engineRate {
+		rs, err = resample.New(f.Rate, engineRate, f.Channels)
+		if err != nil {
+			s.logf("поток Spotify: %v", err)
+			return
+		}
+		out.Rate = engineRate
+	}
+	ss := &session{srv: s, id: id, conn: conn, f: f, rs: rs, src: pcmstream.New(out, maxBuffered, history), corked: true}
 	ss.st = s.eng.NewStream(id, engine.Music, ss.src,
 		engine.Options{Spectrum: spectrum.SourceMusic, RewindOnPause: true, Endless: true, PosLatency: s.latency, FadeIn: 25 * time.Millisecond},
 		engine.Events{
@@ -232,7 +249,11 @@ func (s *pcmServer) handle(conn net.Conn) {
 	s.mu.Lock()
 	s.sessions[ss] = struct{}{}
 	s.mu.Unlock()
-	s.logf("поток Spotify %s открыт: %d Гц, %d кан.", id, f.Rate, f.Channels)
+	if rs != nil {
+		s.logf("поток Spotify %s открыт: %d Гц, %d кан. (в движок %d Гц)", id, f.Rate, f.Channels, engineRate)
+	} else {
+		s.logf("поток Spotify %s открыт: %d Гц, %d кан.", id, f.Rate, f.Channels)
+	}
 
 	var buf []byte
 	for {
@@ -256,7 +277,8 @@ type session struct {
 	srv  *pcmServer
 	id   string
 	conn net.Conn
-	f    audio.Format
+	f    audio.Format        // формат звука от шима
+	rs   *resample.Resampler // пересчёт в engineRate; nil, если шим и так играет в нём
 	src  *pcmstream.Source
 	st   *engine.Stream
 
@@ -284,12 +306,20 @@ func (ss *session) frame(typ byte, p []byte) {
 		s.bytesIn += uint64(len(p))
 		s.mu.Unlock()
 		ss.start() // звук пошёл без явного снятия паузы: считаем, что пауза снята
-		ss.src.Write(p)
+		if ss.rs != nil {
+			p = ss.rs.Process(p)
+		}
+		if len(p) > 0 {
+			ss.src.Write(p)
+		}
 	case frFlush:
 		s.mu.Lock()
 		s.flushes++
 		s.mu.Unlock()
 		ss.src.Flush()
+		if ss.rs != nil {
+			ss.rs.Reset()
+		}
 	case frCork:
 		if len(p) < 1 {
 			return

@@ -13,6 +13,7 @@
 | [`aliced-client/`](aliced-client/README.md) | клиент aliced: пауза, «дальше», текстовый запрос Алисе | `bt-out` |
 | [`pcmstream/`](pcmstream/README.md) | звук от чужого процесса как источник движка (буфер, flush, возврат при паузе) | `spotify-soloist` |
 | [`wsclient/`](wsclient/README.md) | клиент WebSocket | `spotify-soloist` |
+| [`resample/`](resample/README.md) | передискретизация PCM (44,1 → 48 кГц) | `spotify-soloist` |
 | [`volmap/`](volmap/README.md) | таблица громкости платформы: уровень 0–20 ↔ Master | `bt-out`, `spotify-soloist` |
 | [`debpkg/`](debpkg/README.md) | файлы из пакета .deb (ar + xz) | `spotify-soloist` |
 

@@ -84,12 +84,20 @@ type Component struct {
 	voiceLast    string    // последнее выполненное действие
 	voiceAt      time.Time // и когда
 	voiceAct     action    // что выполнила последняя перехваченная фраза (для защиты от повтора директивой облака)
+	likes        int       // сколько лайков поставлено или снято
+	likeHintAt   time.Time // когда в последний раз напоминали в журнале, что для лайков нужен вход
+	likeErr      string    // чем кончился последний лайк (пусто — удачно)
+
+	web *webAPI // Web API Spotify (лайки)
 
 	cancelFn func(context.Context) error // отмена диалога Алисы (в тестах подменяется)
 }
 
 func newComponent(cfg Config, eng *engine.Engine, m machine, logf func(string, ...any), run string) *Component {
-	return &Component{cfg: cfg, p: newPaths(cfg.Dir, run, cfg.KeyFile), eng: eng, mach: m, logf: logf, cancelFn: defaultCancel}
+	c := &Component{cfg: cfg, p: newPaths(cfg.Dir, run, cfg.KeyFile), eng: eng, mach: m, logf: logf, cancelFn: defaultCancel}
+	c.web = newWebAPI(c.p, func() string { return c.config().ClientID })
+	c.web.proxy = func() string { return c.config().WebProxy }
+	return c
 }
 
 // config — снимок настроек (они могут поменяться на ходу).
@@ -324,10 +332,12 @@ func (c *Component) arbiter(ctx context.Context) {
 			c.setOwner(ownerYandex)
 		}
 		switch {
-		case s && !prevS && y:
-			n := c.mach.TakeOver()
-			c.noteYield()
-			c.logf("заиграл Spotify: музыка Яндекса (плееров: %d) поставлена на паузу", n)
+		case s && !prevS:
+			// Яндекс играл — остановить; на паузе у платформы остался его плеер — отдать место Spotify (видно на дисплее)
+			if n := c.mach.TakeOver(); n > 0 {
+				c.noteYield()
+				c.logf("заиграл Spotify: музыка Яндекса (плееров: %d) остановлена", n)
+			}
 			y = false
 		case y && !prevY && s:
 			if err := c.ctl.Pause(); err != nil {

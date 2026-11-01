@@ -32,12 +32,18 @@ type Config struct {
 	Voice       bool `conf:"voice"`        // «Алиса, пауза / дальше / назад / продолжи» управляют Spotify, пока он играет
 	VoiceCancel bool `conf:"voice_cancel"` // выполнив такую фразу, отменить диалог Алисы, чтобы облако не отвечало «не поняла»
 
+	Music    bool   `conf:"music"`     // «Алиса, включи музыку» запускает Spotify, пока ничего не играет
+	MusicURI string `conf:"music_uri"` // что включать, если продолжать нечего: spotify:playlist:… / album / artist; пусто — не вмешиваться
+	Like     bool   `conf:"like"`      // «Алиса, лайк»: поставить лайк играющему треку (нужны client_id и openmediad spotify login)
+	ClientID string `conf:"client_id"` // Client ID приложения из Developer Dashboard Spotify (для лайков)
+	WebProxy string `conf:"web_proxy"` // прокси для Web API Spotify (http://хост:порт, socks5://хост:порт): API закрыт для адресов некоторых стран
+
 	VirtualPlayer bool `conf:"virtual_player"` // сообщать платформе о Spotify как о плеере музыки (кнопка, короткие фразы без «Алиса», дисплей)
 }
 
 func defaults() *Config {
 	return &Config{Toggle: config.Toggle{Enabled: true}, DeviceName: "openmediad", Volume: 50, VolumeSync: true, CacheMB: 100, KeepFreeMB: 25,
-		FixCP15: true, WSPort: 9090, LatencyMS: 250, Voice: true, VoiceCancel: true, VirtualPlayer: true}
+		FixCP15: true, WSPort: 9090, LatencyMS: 250, Voice: true, VoiceCancel: true, VirtualPlayer: true, Like: true, Music: true}
 }
 
 const template = `[spotify-soloist]        # Spotify Connect: колонка в списке устройств Spotify, играет через openmediad (опытный)
@@ -56,6 +62,11 @@ latency_ms = 250         # задержка от шима до динамика,
 verbose = false          # подробный журнал Soloist (много строк)
 voice = true             # «Алиса, пауза / дальше / назад / продолжи» управляют Spotify, пока он играет (иначе облако Яндекса отвечает «не поняла»)
 voice_cancel = true      # выполнив такую фразу, отменить диалог Алисы, чтобы она не отвечала поверх
+music = true             # «Алиса, включи музыку» запускает Spotify (продолжает прошлую сессию), если ничего не играет
+music_uri = ""           # что включать, когда продолжать нечего: spotify:playlist:… (или album, artist, track); пусто — Алиса включит Яндекс
+web_proxy = ""           # прокси для Web API Spotify (лайки): http://хост:порт или socks5://хост:порт; нужен, если Spotify отвечает «unavailable in this country»
+client_id = ""           # Client ID вашего приложения в Developer Dashboard Spotify: нужен для лайков (см. README: openmediad spotify login)
+like = true              # «Алиса, лайк» ставит лайк играющему треку в Spotify (работает после client_id и openmediad spotify login)
 virtual_player = true    # сообщать платформе о Spotify как о плеере музыки: тогда платформа знает, что играет (опытное; false — Spotify для неё невидим)`
 
 func (c *Config) validate() error {
@@ -70,6 +81,12 @@ func (c *Config) validate() error {
 		return fmt.Errorf("spotify-soloist.keep_free_mb: %d — от 5 до 500", c.KeepFreeMB)
 	case c.WSPort < 1024 || c.WSPort > 65535:
 		return fmt.Errorf("spotify-soloist.ws_port: %d — от 1024 до 65535", c.WSPort)
+	case c.ClientID != "" && !clientIDRe.MatchString(c.ClientID):
+		return fmt.Errorf("spotify-soloist.client_id: ожидаются 16–64 латинских букв и цифр из Developer Dashboard Spotify, без пробелов")
+	case c.MusicURI != "" && !musicURIRe.MatchString(c.MusicURI):
+		return fmt.Errorf("spotify-soloist.music_uri: ожидается spotify:playlist:…, spotify:album:…, spotify:artist:… или spotify:track:…")
+	case validProxy(c.WebProxy) != nil:
+		return fmt.Errorf("spotify-soloist.web_proxy: %w", validProxy(c.WebProxy))
 	case c.LatencyMS < 0 || c.LatencyMS > 2000:
 		return fmt.Errorf("spotify-soloist.latency_ms: %d — от 0 до 2000", c.LatencyMS)
 	}

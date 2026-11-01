@@ -86,6 +86,7 @@ openmediad/
 │   │   ├── alsactl/             регулятор громкости ALSA и статус PCM        → bt-out, devtools
 │   │   ├── aliced-client/       клиент aliced: пауза / «дальше» / запрос Алисе → bt-out
 │   │   ├── pcmstream/           звук от чужого процесса как источник движка  → spotify-soloist (и будущие движки Spotify)
+│   │   ├── resample/            передискретизация PCM (44,1 → 48 кГц)         → spotify-soloist
 │   │   ├── wsclient/            клиент WebSocket (RFC 6455)                  → spotify-soloist
 │   │   ├── debpkg/              файлы из пакета .deb (ar + xz/gz)            → spotify-soloist
 │   │   └── volmap/              таблица громкости платформы (уровень ↔ Master) → bt-out, spotify-soloist

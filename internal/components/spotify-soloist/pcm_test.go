@@ -2,6 +2,7 @@ package spotifysoloist
 
 import (
 	"net"
+	"strings"
 	"testing"
 	"time"
 )
@@ -83,8 +84,28 @@ func TestSessionStartsOnDataWithoutUncork(t *testing.T) {
 	s, o := newTestServer(t)
 	c := connect(t, s)
 	// шим при подключении сообщает состояние паузы; если звук пошёл без снятия паузы, считаем, что пауза снята
-	send(t, c, hello(44100, 2), frame(frData, pcm(100)))
+	send(t, c, hello(48000, 2), frame(frData, pcm(100)))
 	waitFor(t, "звук без явного снятия паузы", func() bool { return o.total() == 400 })
+}
+
+// Spotify играет в 44,1 кГц, а наушники (bt-out) и вся платформа принимают 48 кГц: в движок звук идёт уже пересчитанным.
+func TestSpotifyRateIsConvertedTo48k(t *testing.T) {
+	s, o := newTestServer(t)
+	c := connect(t, s)
+	send(t, c, hello(44100, 2), cork(false), frame(frData, pcm(44100)))
+	waitFor(t, "звук дошёл до вывода", func() bool { return o.total() > 4*47000 })
+	o.mu.Lock()
+	f := o.fmts[0]
+	o.mu.Unlock()
+	if f.Rate != 48000 || f.Channels != 2 {
+		t.Fatalf("движок открыл вывод в %d Гц × %d, ждали 48000 × 2", f.Rate, f.Channels)
+	}
+	if got := o.total() / 4; got < 47000 || got > 48100 {
+		t.Fatalf("секунда входа дала %d кадров, ждали около 48000", got)
+	}
+	if st := s.status(); !strings.Contains(st.Format, "44100") || !strings.Contains(st.Format, "48000") {
+		t.Fatalf("в статусе формат %q", st.Format)
+	}
 }
 
 func TestFlushCounted(t *testing.T) {

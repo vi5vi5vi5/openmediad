@@ -58,6 +58,7 @@ func (o *memOut) bytes() int {
 type outs struct {
 	mu   sync.Mutex
 	list []*memOut
+	fmts []audio.Format // формат, с которым движок открывал каждый вывод
 }
 
 func (o *outs) all() []*memOut {
@@ -79,6 +80,7 @@ func newEngine() (*engine.Engine, *outs) {
 		m := &memOut{}
 		o.mu.Lock()
 		o.list = append(o.list, m)
+		o.fmts = append(o.fmts, f)
 		o.mu.Unlock()
 		return m, nil
 	})}, o

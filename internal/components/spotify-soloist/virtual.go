@@ -8,6 +8,30 @@ import "openmediad/internal/core/quasar/mediad"
 // сообщает автомату состояние Soloist (mediad.Machine.SetVirtual), автомат шлёт платформе те же события, что у своего плеера музыки,
 // а команды платформы этому плееру (пауза, освобождение) приходят обратно в onVirtualCommand и идут в Soloist.
 
+// startMusic выполняет «включи музыку»: продолжает прошлую сессию Spotify, а если продолжать нечего — запускает music_uri из настроек.
+// false — вмешиваться нечем (отключено или не задан music_uri): фраза остаётся Алисе.
+func (c *Component) startMusic(ps playerState) bool {
+	cfg := c.config()
+	if !cfg.Music {
+		return false
+	}
+	switch {
+	case ps.URI != "": // Soloist помнит последний трек и после перезапуска, даже если устройство не выбрано в приложении
+		if err := c.ctl.Resume(); err != nil {
+			c.logf("голос: включить музыку не вышло: %v", err)
+			return false
+		}
+	case cfg.MusicURI != "":
+		if err := c.ctl.PlayURI(cfg.MusicURI); err != nil {
+			c.logf("голос: включить музыку не вышло: %v", err)
+			return false
+		}
+	default:
+		return false
+	}
+	return true
+}
+
 // virtualPush сообщает автомату, что сейчас делает Spotify. Вызывается при каждом изменении состояния Soloist; повторы автомат отсекает сам.
 func (c *Component) virtualPush() {
 	if c.mach == nil || c.ctl == nil {

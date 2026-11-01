@@ -45,8 +45,10 @@ func (c *Component) owns(a action, ps playerState) bool {
 		return sp && !y
 	case actResume:
 		return paused
-	case actNext, actPrev:
+	case actNext, actPrev, actLike, actUnlike:
 		return sp && !y || paused
+	case actPlayMusic:
+		return !sp && !y // ничего не играет: «включи музыку» — просьба заиграть что-то
 	}
 	return false
 }
@@ -68,6 +70,10 @@ func (c *Component) InterceptPhrase(reqID, text string, fast bool) bool {
 	}
 	var err error
 	switch a {
+	case actPlayMusic:
+		if !c.startMusic(ps) {
+			return false
+		}
 	case actPause:
 		err = c.ctl.Pause()
 	case actResume:
@@ -76,6 +82,10 @@ func (c *Component) InterceptPhrase(reqID, text string, fast bool) bool {
 		err = c.ctl.SkipNext()
 	case actPrev:
 		err = c.ctl.SkipPrev()
+	case actLike, actUnlike:
+		if !c.startLike(ps, a == actLike) {
+			return false // нет входа в Web API или играет не трек: фраза остаётся Алисе
+		}
 	}
 	if err != nil {
 		c.logf("голос: «%s» не выполнена: %v — фраза уходит Алисе", a, err)
@@ -92,7 +102,7 @@ func (c *Component) InterceptPhrase(reqID, text string, fast bool) bool {
 		how = ", быстрая команда"
 	}
 	c.logf("голос: %s — выполнено вместо Алисы (запрос %.8s%s)", a, reqID, how) // сам текст фразы в журнал не пишем: фразы приватны
-	if c.mach != nil && (a == actNext || a == actPrev || a == actResume) {
+	if c.mach != nil && (a == actNext || a == actPrev || a == actResume || a == actPlayMusic) {
 		// платформа сама запустит очередь Яндекса (audio_play после «дальше», «назад», «играй»): этот запуск достанется Spotify
 		c.mach.ArmCarrier(carrierWindow)
 	}
@@ -109,6 +119,7 @@ var directiveActions = map[string]action{
 	"player_continue":       actResume,
 	"player_next_track":     actNext,
 	"player_previous_track": actPrev,
+	"player_like":           actLike,
 }
 
 // directiveEcho — сколько после перехваченной фразы директива того же действия считается повтором: фразу уже выполнили, а облако,
@@ -146,6 +157,10 @@ func (c *Component) OnDirective(name string) {
 		err = c.ctl.SkipNext()
 	case actPrev:
 		err = c.ctl.SkipPrev()
+	case actLike:
+		if !c.startLike(ps, true) {
+			return
+		}
 	}
 	if err != nil {
 		c.logf("голос: директива %s не выполнена: %v", name, err)
@@ -174,6 +189,9 @@ type voiceStatus struct {
 	Enabled bool      `json:"enabled"`
 	Cancel  bool      `json:"cancel_dialog"`
 	Handled int       `json:"handled"`
+	Likes   int       `json:"likes"`                // лайков поставлено или снято
+	LikeOK  bool      `json:"like_ready"`           // для лайков есть client_id и вход
+	LikeErr string    `json:"like_error,omitempty"` // чем кончился последний лайк, если неудачей
 	Last    string    `json:"last,omitempty"`
 	LastAt  time.Time `json:"last_at,omitzero"`
 	Owner   string    `json:"owner,omitempty"` // кто последним начал играть
@@ -183,7 +201,8 @@ func (c *Component) voiceStatus() voiceStatus {
 	cfg := c.config()
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	return voiceStatus{Enabled: cfg.Voice, Cancel: cfg.VoiceCancel, Handled: c.voiceHandled, Last: c.voiceLast, LastAt: c.voiceAt, Owner: c.owner}
+	ready := c.web != nil && cfg.Like && c.web.ready() == nil
+	return voiceStatus{Enabled: cfg.Voice, Cancel: cfg.VoiceCancel, Likes: c.likes, LikeOK: ready, LikeErr: c.likeErr, Handled: c.voiceHandled, Last: c.voiceLast, LastAt: c.voiceAt, Owner: c.owner}
 }
 
 // defaultCancel — отмена диалога через aliced (порт 9875), как кнопка 'c' в консоли maind.

@@ -382,7 +382,8 @@ func (m *Machine) adoptCommand(k msg.CommandKind, c msg.AudioCommand) bool {
 
 // TakeOver — Spotify занял место музыки Яндекса. Играющий плеер Яндекса замолкает без события, а платформа дальше считает его текущим,
 // только под его id теперь Spotify: так она не держит активной сессию Яндекса (иначе дисплей и облако продолжали бы говорить о ней).
-// Остальные играющие плееры ставятся на паузу как обычно. Возвращает, сколько плееров остановлено.
+// Если Яндекс не играет, а на паузе у платформы остался его плеер, Spotify занимает и его (иначе дисплей показывает паузу Яндекса).
+// Остальные играющие плееры ставятся на паузу как обычно. Возвращает, сколько играющих плееров остановлено.
 func (m *Machine) TakeOver() int {
 	m.mu.Lock()
 	m.init()
@@ -392,14 +393,21 @@ func (m *Machine) TakeOver() int {
 			playing = append(playing, in)
 		}
 	}
-	if len(playing) == 0 {
-		m.mu.Unlock()
-		return 0
-	}
-	cur := playing[0]
+	var cur *inst
 	for _, in := range playing {
-		if in.startMs > cur.startMs {
+		if cur == nil || in.startMs > cur.startMs {
 			cur = in
+		}
+	}
+	if cur == nil { // ничего не играет, но у платформы может оставаться сессия Яндекса на паузе: Spotify занимает и её
+		for _, in := range m.players {
+			if in.st == stPaused && (cur == nil || in.stopMs > cur.stopMs) {
+				cur = in
+			}
+		}
+		if cur == nil {
+			m.mu.Unlock()
+			return 0
 		}
 	}
 	id := cur.meta.Player.ID

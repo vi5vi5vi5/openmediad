@@ -252,6 +252,9 @@ func (c *control) Resume() error { return c.send("play", nil) }
 func (c *control) SkipNext() error { return c.send("skip_next", nil) }
 func (c *control) SkipPrev() error { return c.send("skip_prev", nil) }
 
+// PlayURI запускает контекст (плейлист, альбом, исполнитель) или трек.
+func (c *control) PlayURI(uri string) error { return c.send("play", map[string]any{"uri": uri}) }
+
 // SetVolume задаёт громкость Soloist, 0–100.
 func (c *control) SetVolume(v int) error {
 	if v < 0 || v > 100 {
