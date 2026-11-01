@@ -20,7 +20,9 @@ import (
 	"openmediad/internal/core/ctlsock"
 	"openmediad/internal/core/engine"
 	"openmediad/internal/core/journal"
+	"openmediad/internal/core/led"
 	"openmediad/internal/core/platform/clock"
+	"openmediad/internal/core/quasar/buttons"
 	"openmediad/internal/core/quasar/explain"
 	"openmediad/internal/core/quasar/mediad"
 	"openmediad/internal/core/quasar/shim"
@@ -64,6 +66,9 @@ type daemon struct {
 	closers []func()
 	dup     dedup
 	gate    *voiceGate // шлюз голоса Алисы (nil, пока голос играет не движок)
+	led     *led.Panel // панель индикации: модули сообщают, кто играет и куда идёт звук (подсветку рисует компонент led-ring)
+
+	platformLog string // лог платформы, по которому видны кнопка и жесты (в тестах подменяется)
 }
 
 // Run запускает демон и работает, пока не придёт SIGTERM или SIGINT (или не отменён ctx). Ошибка — демон не смог стартовать.
@@ -91,7 +96,7 @@ func Run(ctx context.Context, o Options) error {
 	if cfg.General.Mode == "replace" {
 		return errors.New("режим replace ещё не готов (фаза 12 плана): укажите mode = \"shim\"")
 	}
-	d := &daemon{opt: o, cfg: cfg, started: time.Now()}
+	d := &daemon{opt: o, cfg: cfg, started: time.Now(), platformLog: buttons.PlatformLog}
 	defer func() {
 		for i := len(d.closers) - 1; i >= 0; i-- {
 			d.closers[i]()
@@ -122,6 +127,7 @@ func Run(ctx context.Context, o Options) error {
 	}
 	d.startComponents(ctx)
 	d.watchAliced(ctx, d.dialogLogEnabled())
+	d.watchButtons(ctx)
 
 	go d.signals(ctx, cancel)
 	d.j.Log(journal.Info, "shim", fmt.Sprintf("шим: %s → %s (исходящие с %s)", o.Listen, o.Upstream, o.Src), "", nil)
@@ -152,7 +158,9 @@ func (d *daemon) setupJournal() {
 // setupEngine — движок с выходами по маршрутам настроек.
 func (d *daemon) setupEngine() {
 	sp := &speaker.Sink{Aplay: d.cfg.Speaker.Aplay, Device: d.cfg.Speaker.Device}
+	d.led = led.NewPanel()
 	d.rt = newRouter(d.cfg.Route, sp)
+	d.rt.ind = d.led
 	d.eng = &engine.Engine{Router: d.rt, Logf: d.j.Logf("engine")}
 }
 

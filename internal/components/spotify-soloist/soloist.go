@@ -29,6 +29,7 @@ import (
 	"time"
 
 	"openmediad/internal/core/engine"
+	"openmediad/internal/core/led"
 	"openmediad/internal/core/platform/disk"
 	"openmediad/internal/core/platform/layout"
 	"openmediad/internal/core/quasar/mediad"
@@ -84,11 +85,19 @@ type Component struct {
 	voiceLast    string    // последнее выполненное действие
 	voiceAt      time.Time // и когда
 	voiceAct     action    // что выполнила последняя перехваченная фраза (для защиты от повтора директивой облака)
+	platformAt   time.Time // когда платформа последний раз сама адресовала команду плееру Spotify (buttons.go)
 	likes        int       // сколько лайков поставлено или снято
 	likeHintAt   time.Time // когда в последний раз напоминали в журнале, что для лайков нужен вход
 	likeErr      string    // чем кончился последний лайк (пусто — удачно)
 
-	web *webAPI // Web API Spotify (лайки)
+	web     *webAPI       // Web API Spotify (лайки, поиск)
+	aliases aliasStore    // свои названия: «кино» → ссылка Spotify
+	led     led.Indicator // подсветка: Spotify играет (nil — без подсветки)
+
+	reqs         map[string]*pendingReq // просьбы «включи <название>», чьего ответа облака ждём (request.go)
+	searchHintAt time.Time
+	resolve      func(playRequest) (resolution, error) // подмена поиска в тестах
+	swallow      func()                                // погасить ближайший ответ Алисы голосом (служба демона)
 
 	cancelFn func(context.Context) error // отмена диалога Алисы (в тестах подменяется)
 }
@@ -97,6 +106,7 @@ func newComponent(cfg Config, eng *engine.Engine, m machine, logf func(string, .
 	c := &Component{cfg: cfg, p: newPaths(cfg.Dir, run, cfg.KeyFile), eng: eng, mach: m, logf: logf, cancelFn: defaultCancel}
 	c.web = newWebAPI(c.p, func() string { return c.config().ClientID })
 	c.web.proxy = func() string { return c.config().WebProxy }
+	c.aliases = newAliasStore(c.p)
 	return c
 }
 
@@ -140,6 +150,7 @@ func (c *Component) Start(ctx context.Context) error {
 
 	c.pcm = newPCMServer(c.p.sock(), c.eng, c.logf)
 	c.pcm.latency = time.Duration(cfg.LatencyMS) * time.Millisecond
+	c.pcm.onEvent = c.onPlayChange
 	if err := c.pcm.Start(); err != nil {
 		return err
 	}
@@ -194,6 +205,9 @@ func (c *Component) Stop() {
 	}
 	c.cancel()
 	c.wg.Wait()
+	if c.led != nil {
+		c.led.Off(led.Source, Name)
+	}
 	if c.mach != nil {
 		c.mach.SetVirtual(nil) // платформа не должна считать, что Spotify ещё играет
 	}

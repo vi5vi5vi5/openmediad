@@ -8,6 +8,7 @@ import (
 	"openmediad/internal/core/ctlsock"
 	"openmediad/internal/core/engine"
 	"openmediad/internal/core/journal"
+	"openmediad/internal/core/quasar/buttons"
 	"openmediad/internal/core/quasar/mediad"
 	"openmediad/internal/core/registry"
 )
@@ -46,8 +47,23 @@ type (
 	}
 	// phraseInterceptor — компонент перехватывает окончательные фразы пользователя раньше, чем ответит облако. true — фраза его:
 	// демон гасит ответ облака голосом (шлюз); отменить диалог компонент может сам. fast — быстрая команда платформы («пауза» без «Алиса»).
+	// replyHandler — компонент хочет знать весь ответ облака на запрос целиком (номер запроса и все директивы), а не по одной директиве:
+	// по составу ответа видно, чем облако считает запрос (audio_play — музыкой, команды умного дома — не музыкой).
+	replyHandler interface {
+		OnReply(reqID string, directives []string)
+	}
+	// trackHandler — компонент хочет знать, какой трек облако решило включить (название и исполнитель из audio_play): оно слышит фразу лучше нас.
+	// Приходит раньше OnReply того же ответа.
+	trackHandler interface {
+		OnReplyTrack(reqID, title, artist string)
+	}
 	phraseInterceptor interface {
 		InterceptPhrase(reqID, text string, fast bool) (handled bool)
+	}
+	// buttonHandler — компонент играет музыку сам, а платформа про неё не знает: нажатие кнопки Алисы и проведение по колонке
+	// она адресует своему плееру. true — действие выполнено здесь.
+	buttonHandler interface {
+		OnButton(a buttons.Action) (handled bool)
 	}
 )
 
@@ -62,6 +78,16 @@ func (d *daemon) startComponents(ctx context.Context) {
 			"machine": d.m,
 			"journal": d.j,
 			"state":   d.debugState,
+			"led":     d.led,
+			// погасить ближайший ответ Алисы голосом (если голос ведёт компонент движка): для компонентов, выполнивших фразу не сразу
+			"swallow-voice": func() {
+				d.mu.Lock()
+				g := d.gate
+				d.mu.Unlock()
+				if g != nil {
+					g.Swallow()
+				}
+			},
 		},
 	}
 	comps := []*component{} // не nil: признак «компоненты подключены» для status

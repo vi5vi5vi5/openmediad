@@ -12,6 +12,7 @@
 | [`spectrum/`](spectrum/README.md) | математика спектра (БПФ): её вызывает движок |
 | [`speaker/`](speaker/README.md) | выход «динамики колонки» (всегда есть) и запуск системного `aplay` |
 | [`quasar/`](quasar/README.md) | язык шины Quasar и эмуляция штатного плеера `mediad` |
+| [`led/`](led/README.md) | панель индикации: модули сообщают, кто играет и куда идёт звук (подсветку рисует `led-ring`) |
 | [`registry/`](registry/README.md) | механизм компонентов: паспорт, регистрация, окружение |
 | [`config/`](config/README.md) | файл настроек |
 | [`journal/`](journal/README.md) | журнал |

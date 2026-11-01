@@ -49,7 +49,7 @@ func TestVirtualPlayerConfigReload(t *testing.T) {
 	r := newVoiceRig(t, nil)
 	r.state(t, "playing")
 	r.c.cancel = func() {} // как у запущенного компонента: иначе Reload только запоминает настройки
-	n := *defaults()
+	n := r.c.config()
 	n.VirtualPlayer = false
 	r.c.Reload(&n)
 	if v, _ := r.mach.virtual(); v != nil {

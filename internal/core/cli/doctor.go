@@ -283,6 +283,8 @@ func checkNeed(id string) (present, known bool) {
 		return port("127.0.0.1:9903")
 	case registry.NeedAliced:
 		return port("127.0.0.1:9875")
+	case registry.NeedLogoFB:
+		return file("/dev/fb0")
 	case registry.NeedCP15Barrier:
 		b, err := os.ReadFile(layout.Root + "/proc/sys/abi/cp15_barrier")
 		if err != nil {

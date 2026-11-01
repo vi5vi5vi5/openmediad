@@ -68,3 +68,25 @@ func TestDescribeAliceReply(t *testing.T) {
 		}
 	}
 }
+
+func TestReplyTrackFromAudioPlay(t *testing.T) {
+	js := []byte(`{"response":{"directives":[
+	 {"name":"tts_play_placeholder","payload":{"channel":"Dialog"}},
+	 {"name":"audio_play","payload":{"background_mode":"Ducking","metadata":{"title":"Loser","subtitle":"Tame Impala","art_image_url":"x"},"stream":{"url":"https://strm"}}},
+	 {"name":"@@mm_stack_engine_get_next","type":"server_action"}]}}`)
+	got, ok := replyTrack(js)
+	if !ok || got.Title != "Loser" || got.Subtitle != "Tame Impala" {
+		t.Fatalf("трек из ответа: %+v %v", got, ok)
+	}
+	for name, bad := range map[string]string{
+		"нет audio_play":       `{"response":{"directives":[{"name":"player_pause"}]}}`,
+		"нет метаданных":       `{"response":{"directives":[{"name":"audio_play","payload":{}}]}}`,
+		"не JSON":              `не json`,
+		"пустой ответ":         ``,
+		"audio_play без имени": `{"response":{"directives":[{"name":"audio_play","payload":{"metadata":{"subtitle":"x"}}}]}}`,
+	} {
+		if _, ok := replyTrack([]byte(bad)); ok {
+			t.Errorf("%s: трек найден", name)
+		}
+	}
+}

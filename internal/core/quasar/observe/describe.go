@@ -106,6 +106,36 @@ func describeCommand(c msg.AudioCommand) string {
 	return b.String()
 }
 
+// ReplyTrack — трек, который облако решило включить: метаданные директивы audio_play (title — название, subtitle — исполнитель).
+// Облако слышит и понимает фразу лучше, чем её видим мы, поэтому по нему можно проверить, какой трек имелся в виду.
+type ReplyTrack struct{ Title, Subtitle string }
+
+// replyTrack достаёт из JSON ответа облака трек первой директивы audio_play.
+func replyTrack(js []byte) (ReplyTrack, bool) {
+	var v struct {
+		Response struct {
+			Directives []struct {
+				Name    string `json:"name"`
+				Payload struct {
+					Metadata struct {
+						Title    string `json:"title"`
+						Subtitle string `json:"subtitle"`
+					} `json:"metadata"`
+				} `json:"payload"`
+			} `json:"directives"`
+		} `json:"response"`
+	}
+	if json.Unmarshal(js, &v) != nil {
+		return ReplyTrack{}, false
+	}
+	for _, d := range v.Response.Directives {
+		if d.Name == "audio_play" && d.Payload.Metadata.Title != "" {
+			return ReplyTrack{Title: d.Payload.Metadata.Title, Subtitle: d.Payload.Metadata.Subtitle}, true
+		}
+	}
+	return ReplyTrack{}, false
+}
+
 // directiveNames достаёт имена директив из JSON ответа облака (response.directives[].name).
 func directiveNames(js []byte) []string {
 	var v struct {

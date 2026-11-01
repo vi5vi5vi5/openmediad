@@ -14,6 +14,7 @@
 | [`pcmstream/`](pcmstream/README.md) | звук от чужого процесса как источник движка (буфер, flush, возврат при паузе) | `spotify-soloist` |
 | [`wsclient/`](wsclient/README.md) | клиент WebSocket | `spotify-soloist` |
 | [`resample/`](resample/README.md) | передискретизация PCM (44,1 → 48 кГц) | `spotify-soloist` |
+| [`ringled/`](ringled/README.md) | кольцо подсветки логотипа Мини 3 (`/dev/fb0`) и хранитель кадра | `led-ring` |
 | [`volmap/`](volmap/README.md) | таблица громкости платформы: уровень 0–20 ↔ Master | `bt-out`, `spotify-soloist` |
 | [`debpkg/`](debpkg/README.md) | файлы из пакета .deb (ar + xz) | `spotify-soloist` |
 

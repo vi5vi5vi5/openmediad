@@ -9,6 +9,7 @@ import (
 	"openmediad/internal/core/audio"
 	"openmediad/internal/core/config"
 	"openmediad/internal/core/engine"
+	"openmediad/internal/core/led"
 )
 
 // Sink — выход звука (динамики, позже наушники и сеть).
@@ -24,6 +25,10 @@ type router struct {
 	mu     sync.RWMutex
 	sinks  map[string]Sink
 	routes atomic.Pointer[config.Route]
+
+	ind  led.Indicator // куда сообщать, в какой выход идёт музыка (nil — не сообщать)
+	imu  sync.Mutex    // порядок сообщений ind и счётчик потоков
+	refs map[string]int
 }
 
 // add подключает выход компонента.
@@ -90,6 +95,9 @@ func (rt *router) Output(c engine.Class, f audio.Format) (audio.Output, error) {
 		}
 		out, err := s.Open(f)
 		if err == nil {
+			if c == engine.Music && rt.ind != nil {
+				out = rt.indicate(name, s, out)
+			}
 			return out, nil
 		}
 		errs = append(errs, fmt.Sprintf("%s: %v", name, err))

@@ -5,6 +5,7 @@ import (
 
 	"openmediad/internal/core/config"
 	"openmediad/internal/core/engine"
+	"openmediad/internal/core/led"
 	"openmediad/internal/core/quasar/mediad"
 	"openmediad/internal/core/registry"
 )
@@ -29,6 +30,9 @@ func init() {
 				return nil, errors.New("yandex: нет движка или автомата mediad")
 			}
 			b := &Backend{Engine: eng, Events: m, Logf: env.Logf("music")}
+			if ind, ok := registry.Use[led.Indicator](env, "led"); ok {
+				b.LED = ind
+			}
 			b.Warm() // сертификаты читаются при запуске, а не на первой команде (иначе задержится кадр шины)
 			return b, nil
 		},

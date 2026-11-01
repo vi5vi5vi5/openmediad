@@ -27,7 +27,9 @@ func (d *daemon) watchAliced(ctx context.Context, logLines bool) {
 			for _, name := range directives {
 				d.directive(name)
 			}
+			d.reply(req, directives)
 		},
+		OnTrack:  func(req string, t observe.ReplyTrack) { d.replyTrack(req, t) },
 		OnPhrase: func(req, text string, fast bool) { d.phrase(req, text, fast, logLines) },
 		OnLine: func(who, text string) {
 			if !logLines {
@@ -96,6 +98,30 @@ func (d *daemon) phrase(req, text string, fast, logLines bool) {
 		d.j.Log(journal.Info, "aliced", "фраза перехвачена компонентом "+t.name,
 			"Компонент выполнил её сам; ответ облака голосом гасится, чтобы Алиса не отвечала поверх.", detail)
 		return
+	}
+}
+
+// replyTrack передаёт компонентам трек, который облако собралось включить (trackHandler).
+func (d *daemon) replyTrack(req string, t observe.ReplyTrack) {
+	d.mu.Lock()
+	comps := d.comps
+	d.mu.Unlock()
+	for _, c := range comps {
+		if h, ok := c.obj.(trackHandler); ok && c.err == nil {
+			h.OnReplyTrack(req, t.Title, t.Subtitle)
+		}
+	}
+}
+
+// reply передаёт ответ облака целиком компонентам, которым это интересно (replyHandler).
+func (d *daemon) reply(req string, directives []string) {
+	d.mu.Lock()
+	comps := d.comps
+	d.mu.Unlock()
+	for _, c := range comps {
+		if h, ok := c.obj.(replyHandler); ok && c.err == nil {
+			h.OnReply(req, directives)
+		}
 	}
 }
 

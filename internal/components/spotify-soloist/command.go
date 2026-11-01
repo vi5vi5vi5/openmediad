@@ -23,7 +23,7 @@ func init() {
 	command.Register("Spotify", command.Command{
 		Name:    "spotify",
 		Summary: "Spotify (Soloist): установка, ключ, обновление, состояние",
-		Usage:   "setup [-from КАТАЛОГ] [-force] | setkey [-file ФАЙЛ] | login [-url АДРЕС | -check | -clear] | rename ИМЯ | update | status | clean [-all] | uninstall -yes",
+		Usage:   "setup [-from КАТАЛОГ] [-force] | setkey [-file ФАЙЛ] | login [-url АДРЕС | -check | -clear] | alias [add НАЗВАНИЕ ССЫЛКА | rm НАЗВАНИЕ] | rename ИМЯ | update | status | clean [-all] | uninstall -yes",
 		Help: `Spotify на колонке работает через официальный движок Soloist. Он закрытый, поэтому проект его не содержит:
 установка скачивает его с CDN Spotify прямо на колонку.
 
@@ -39,6 +39,8 @@ func init() {
              -check — проверить вход и доступ к Web API по шагам. -clear — забыть вход.
              Spotify закрывает Web API для адресов некоторых стран (в ответ «unavailable in this country»): тогда нужен прокси,
              openmediad config set spotify-soloist.web_proxy http://адрес:порт (или socks5://адрес:порт)
+  alias      свои названия для «Алиса, включи …» без поиска (работает и без Web API): openmediad spotify alias add "кино" <ссылка>,
+             alias rm "кино", alias (список). Ссылка: в приложении «Поделиться» → «Копировать ссылку» (плейлист, альбом, исполнитель, трек)
   raw        (отладка) отправить Soloist команду WebSocket и показать его ответы: openmediad spotify raw '{"type":"command","command":"get_state"}'
   rename     переименовать колонку в списке устройств Spotify на ходу (Soloist перезапускается за пару секунд):
              openmediad spotify rename "Кухня". То же: openmediad config set spotify-soloist.device_name "Кухня"
@@ -55,7 +57,7 @@ func init() {
 
 func runCommand(c *command.Ctx, args []string) error {
 	if len(args) == 0 {
-		return command.UsageError{Msg: "нужна подкоманда: setup, setkey, login, rename, update, status, clean, uninstall"}
+		return command.UsageError{Msg: "нужна подкоманда: setup, setkey, login, alias, rename, update, status, clean, uninstall"}
 	}
 	cfg := loadConfig(c)
 	p := newPaths(cfg.Dir, ctlsock.RunDir(), cfg.KeyFile)
@@ -202,6 +204,53 @@ func runCommand(c *command.Ctx, args []string) error {
 			}
 			say("%s", text)
 		}
+	case "alias":
+		store := newAliasStore(p)
+		sub := "list"
+		if len(args) > 1 {
+			sub = args[1]
+		}
+		switch sub {
+		case "list":
+			items, err := store.list()
+			if err != nil {
+				return err
+			}
+			if len(items) == 0 {
+				say("Своих названий пока нет. Добавить: openmediad spotify alias add \"кино\" https://open.spotify.com/artist/…")
+			}
+			for _, it := range items {
+				say("«%s» → %s", it[0], it[1])
+			}
+			return nil
+		case "add":
+			if len(args) != 4 {
+				return command.UsageError{Msg: "нужны название и ссылка: openmediad spotify alias add \"кино\" https://open.spotify.com/artist/…"}
+			}
+			key, uri, err := store.set(args[2], args[3])
+			if err != nil {
+				return command.UsageError{Msg: err.Error()}
+			}
+			say("Теперь «Алиса, включи %s» запускает %s", key, uri)
+			if !cfg.PlayByName {
+				say("Внимание: play_by_name = false в настройках, просьбы по названию выключены.")
+			}
+			return nil
+		case "rm":
+			if len(args) != 3 {
+				return command.UsageError{Msg: "нужно название: openmediad spotify alias rm \"кино\""}
+			}
+			ok, err := store.remove(args[2])
+			if err != nil {
+				return err
+			}
+			if !ok {
+				return fmt.Errorf("названия «%s» нет", normalize(args[2]))
+			}
+			say("Удалено.")
+			return nil
+		}
+		return command.UsageError{Msg: "alias: list, add НАЗВАНИЕ ССЫЛКА или rm НАЗВАНИЕ"}
 	case "rename":
 		if len(args) != 2 {
 			return command.UsageError{Msg: "нужно новое имя: openmediad spotify rename \"Кухня\""}

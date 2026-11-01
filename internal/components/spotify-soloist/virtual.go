@@ -1,6 +1,10 @@
 package spotifysoloist
 
-import "openmediad/internal/core/quasar/mediad"
+import (
+	"time"
+
+	"openmediad/internal/core/quasar/mediad"
+)
 
 // Spotify как плеер платформы. Звук Spotify идёт через наш движок, но платформа о нём не знает: плееры музыки она заводит сама по
 // директиве облака, а состояние плееров (играет, пауза, трек) берёт из событий mediad. Облако отвечает на «пауза», «играй», «дальше»
@@ -63,6 +67,9 @@ func (c *Component) onVirtualCommand(cmd string) {
 	if c.ctl == nil || !c.config().VirtualPlayer {
 		return
 	}
+	c.mu.Lock()
+	c.platformAt = time.Now() // нажатие кнопки платформа уже выполнила сама: из лога его второй раз не повторять (buttons.go)
+	c.mu.Unlock()
 	var err error
 	switch cmd {
 	case "pause", "release":

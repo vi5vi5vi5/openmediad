@@ -34,6 +34,8 @@ type Observer struct {
 	// OnReply, если задан, получает имена директив ответа Алисы (из AliceState aliced; один ответ приходит в нескольких
 	// состояниях — req одинаковый).
 	OnReply func(req string, directives []string)
+	// OnTrack, если задан, получает трек из директивы audio_play ответа (раньше OnReply того же ответа): что именно облако собралось включить.
+	OnTrack func(req string, t ReplyTrack)
 	// OnPhrase, если задан, получает окончательную фразу пользователя (AliceState.FinalPhrase): один раз на запрос, примерно на секунду
 	// раньше ответа облака. Вызывается из цикла чтения: обработчик не должен блокироваться.
 	// fast — быстрая команда платформы без слова «Алиса» (msg.AliceState.FastPhrase): ответ придёт через ≈30 мс и будет беззвучным.
@@ -125,6 +127,9 @@ func (o *Observer) read(t Target, conn net.Conn) error {
 		if o.OnReply != nil && m.Type == wire.TypeAliceState {
 			s := msg.AliceState(m.Body)
 			if _, js, ok := s.Reply(); ok {
+				if t, has := replyTrack(js); has && o.OnTrack != nil {
+					o.OnTrack(s.RequestID(), t)
+				}
 				o.OnReply(s.RequestID(), directiveNames(js))
 			}
 		}

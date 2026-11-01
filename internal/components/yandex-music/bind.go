@@ -9,6 +9,7 @@ import (
 	"openmediad/internal/components/yandex-music/aac"
 	"openmediad/internal/core/audio"
 	"openmediad/internal/core/engine"
+	"openmediad/internal/core/led"
 	"openmediad/internal/core/quasar/mediad"
 	"openmediad/internal/core/spectrum"
 )
@@ -42,11 +43,41 @@ type Backend struct {
 	Client     *http.Client // nil — клиент с сертификатами прошивки (NewClient)
 	NewDecoder aac.Factory  // nil — GStreamer колонки
 	Logf       func(string, ...any)
-	NoFadeIn   bool // для тестов, которые читают отсчёты как метки
-	NoRewind   bool // для тестов с мгновенным выводом: возврат звука по часам там неприменим
+	NoFadeIn   bool          // для тестов, которые читают отсчёты как метки
+	NoRewind   bool          // для тестов с мгновенным выводом: возврат звука по часам там неприменим
+	LED        led.Indicator // необязательно: подсветка показывает, что музыку играет Яндекс
 
 	mu      sync.Mutex
 	players map[string]*player
+	playing map[*player]bool // плееры, которые сейчас звучат (для подсветки)
+}
+
+// ledColor — цвет, который Яндекс предлагает для подсветки (жёлтый).
+var ledColor = led.Color{R: 255, G: 176, B: 0}
+
+// mark отмечает, что плеер зазвучал (on) или замолчал; подсветка горит, пока звучит хоть один.
+func (b *Backend) mark(p *player, on bool) {
+	if b.LED == nil || p == nil {
+		return
+	}
+	b.mu.Lock()
+	if b.playing == nil {
+		b.playing = map[*player]bool{}
+	}
+	was := len(b.playing)
+	if on {
+		b.playing[p] = true
+	} else {
+		delete(b.playing, p)
+	}
+	now := len(b.playing)
+	b.mu.Unlock()
+	switch {
+	case was == 0 && now > 0:
+		b.LED.On(led.Source, "yandex-music", ledColor)
+	case was > 0 && now == 0:
+		b.LED.Off(led.Source, "yandex-music")
+	}
 }
 
 type player struct {
@@ -103,7 +134,7 @@ func (b *Backend) Open(id string, t mediad.Track, offsetMs uint64) {
 	p.st = b.Engine.NewStream(id, engine.Music, src, opt, engine.Events{
 		Ready:  func(i audio.Info) { b.Events.Opened(b.currentID(p), uint64(i.Duration/time.Millisecond)) },
 		Failed: func(err error) { b.Events.Failed(b.currentID(p), err) },
-		Ended:  func() { b.Events.Finished(b.currentID(p)) },
+		Ended:  func() { b.mark(p, false); b.Events.Finished(b.currentID(p)) },
 	})
 	if b.players == nil {
 		b.players = map[string]*player{}
@@ -136,6 +167,7 @@ func (b *Backend) Adopt(from, to string, offsetMs uint64) {
 func (b *Backend) Start(id string) {
 	if p := b.get(id); p != nil {
 		p.st.Play()
+		b.mark(p, true)
 	}
 }
 
@@ -143,6 +175,7 @@ func (b *Backend) Start(id string) {
 func (b *Backend) Pause(id string) {
 	if p := b.get(id); p != nil {
 		p.st.Pause()
+		b.mark(p, false)
 	}
 }
 
@@ -154,6 +187,7 @@ func (b *Backend) Close(id string) {
 	b.mu.Unlock()
 	if p != nil {
 		p.st.Close()
+		b.mark(p, false)
 	}
 }
 

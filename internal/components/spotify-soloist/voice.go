@@ -62,6 +62,12 @@ func (c *Component) InterceptPhrase(reqID, text string, fast bool) bool {
 	}
 	a := parsePhrase(text)
 	if a == actNone {
+		if !fast && cfg.PlayByName {
+			// «включи Кино», «включи песню …»: ищем и решаем позже (request.go); саму фразу не забираем
+			if r, ok := parsePlayRequest(text); ok {
+				c.beginPlayRequest(reqID, r)
+			}
+		}
 		return false
 	}
 	ps := c.ctl.state()

@@ -109,6 +109,13 @@ var All = []registry.Info{
 			"Soloist — закрытая программа Spotify: она скачивается самим пользователем при установке и не распространяется с проектом; " +
 			"условия Spotify (Developer Policy, в частности запрет голосового управления Spotify) принимает пользователь",
 	},
+	{
+		Name: "led-ring", Title: "Подсветка логотипа", Section: "led-ring", Kind: registry.Service, Class: registry.Optional,
+		Summary:      "кольцо подсветки Мини 3 показывает, какой источник играет (Яндекс, Spotify) и куда идёт звук (наушники); модули сообщают панели индикации, цвета и зоны настраиваются",
+		Experimental: true, Ready: true,
+		Needs:     []registry.Need{need(registry.NeedLogoFB, "кольцо подсветки логотипа `/dev/fb0` (Станция Мини 3)")},
+		WithoutIt: "кольцо подсветки остаётся у прошивки; модули всё равно сообщают панели индикации, но показывать её некому",
+	},
 
 	// запланированные (в сборку не входят)
 	{Name: "net-out", Title: "Звук в сеть", Section: "net-out", Kind: registry.Sink, Class: registry.Optional, Summary: "звук в сеть для других программ", Phase: 7},

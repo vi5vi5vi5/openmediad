@@ -7,6 +7,7 @@ import (
 	"openmediad/internal/core/config"
 	"openmediad/internal/core/ctlsock"
 	"openmediad/internal/core/engine"
+	"openmediad/internal/core/led"
 	"openmediad/internal/core/quasar/mediad"
 	"openmediad/internal/core/registry"
 )
@@ -31,19 +32,22 @@ type Config struct {
 
 	Voice       bool `conf:"voice"`        // «Алиса, пауза / дальше / назад / продолжи» управляют Spotify, пока он играет
 	VoiceCancel bool `conf:"voice_cancel"` // выполнив такую фразу, отменить диалог Алисы, чтобы облако не отвечало «не поняла»
+	Buttons     bool `conf:"buttons"`      // кнопка Алисы на колонке ставит Spotify на паузу и снимает, проведение по верху колонки листает треки
 
-	Music    bool   `conf:"music"`     // «Алиса, включи музыку» запускает Spotify, пока ничего не играет
-	MusicURI string `conf:"music_uri"` // что включать, если продолжать нечего: spotify:playlist:… / album / artist; пусто — не вмешиваться
-	Like     bool   `conf:"like"`      // «Алиса, лайк»: поставить лайк играющему треку (нужны client_id и openmediad spotify login)
-	ClientID string `conf:"client_id"` // Client ID приложения из Developer Dashboard Spotify (для лайков)
-	WebProxy string `conf:"web_proxy"` // прокси для Web API Spotify (http://хост:порт, socks5://хост:порт): API закрыт для адресов некоторых стран
+	Music      bool   `conf:"music"`        // «Алиса, включи музыку» запускает Spotify, пока ничего не играет
+	MusicURI   string `conf:"music_uri"`    // что включать, если продолжать нечего: spotify:playlist:… / album / artist; пусто — не вмешиваться
+	QuietReply bool   `conf:"quiet_reply"`  // когда запрос выполняет Spotify, голос Алисы («Включаю …», «не нашла») не звучит
+	PlayByName bool   `conf:"play_by_name"` // «Алиса, включи Кино / песню … / альбом …»: найти в Spotify (своё название или поиск) и запустить
+	Like       bool   `conf:"like"`         // «Алиса, лайк»: поставить лайк играющему треку (нужны client_id и openmediad spotify login)
+	ClientID   string `conf:"client_id"`    // Client ID приложения из Developer Dashboard Spotify (для лайков)
+	WebProxy   string `conf:"web_proxy"`    // прокси для Web API Spotify (http://хост:порт, socks5://хост:порт): API закрыт для адресов некоторых стран
 
 	VirtualPlayer bool `conf:"virtual_player"` // сообщать платформе о Spotify как о плеере музыки (кнопка, короткие фразы без «Алиса», дисплей)
 }
 
 func defaults() *Config {
-	return &Config{Toggle: config.Toggle{Enabled: true}, DeviceName: "openmediad", Volume: 50, VolumeSync: true, CacheMB: 100, KeepFreeMB: 25,
-		FixCP15: true, WSPort: 9090, LatencyMS: 250, Voice: true, VoiceCancel: true, VirtualPlayer: true, Like: true, Music: true}
+	return &Config{Toggle: config.Toggle{Enabled: true}, DeviceName: "openmediad", Volume: 50, VolumeSync: true, CacheMB: 100, KeepFreeMB: 40,
+		FixCP15: true, WSPort: 9090, LatencyMS: 250, Voice: true, VoiceCancel: true, Buttons: true, VirtualPlayer: true, Like: true, Music: true, PlayByName: true, QuietReply: true}
 }
 
 const template = `[spotify-soloist]        # Spotify Connect: колонка в списке устройств Spotify, играет через openmediad (опытный)
@@ -54,7 +58,7 @@ key_file = ""            # файл с ключом Soloist (права 0600); �
 volume_sync = true       # громкость Spotify = громкость колонки: «Алиса, тише» и кнопки двигают ползунок в приложении, ползунок меняет колонку
 volume = 50              # начальная громкость Soloist, 0–100; нужна только при volume_sync = false
 cache_mb = 100           # предел звукового кэша на /data, МБ (Soloist не принимает меньше 100)
-keep_free_mb = 25        # сколько МБ держать свободными на /data: меньше — самые старые файлы кэша удаляются
+keep_free_mb = 40        # сколько МБ держать свободными на /data: меньше — самые старые файлы кэша удаляются (установка новой версии openmediad просит не меньше 28 МБ)
 fix_cp15 = true          # при запуске выставлять abi.cp15_barrier = 2 (до перезагрузки). ВНИМАНИЕ: это системная настройка ядра колонки;
                          # без неё Soloist зависает. Включая компонент в сборку, вы с этим соглашаетесь. false — выставляйте сами
 ws_port = 9090           # порт WebSocket API Soloist (только 127.0.0.1)
@@ -62,6 +66,9 @@ latency_ms = 250         # задержка от шима до динамика,
 verbose = false          # подробный журнал Soloist (много строк)
 voice = true             # «Алиса, пауза / дальше / назад / продолжи» управляют Spotify, пока он играет (иначе облако Яндекса отвечает «не поняла»)
 voice_cancel = true      # выполнив такую фразу, отменить диалог Алисы, чтобы она не отвечала поверх
+buttons = true           # кнопка Алисы на колонке ставит Spotify на паузу и снимает, проведение по верху колонки листает треки (иначе кнопка молчит, а жест запускает Яндекс.Музыку)
+quiet_reply = true       # когда запрос («включи Кино», «включи песню …») выполняет Spotify, голос Алисы не озвучивает свой ответ; false — Алиса отвечает как обычно
+play_by_name = true      # «Алиса, включи Кино», «включи песню …»: свои названия (openmediad spotify alias) и поиск в Spotify (нужны client_id, вход и из России прокси)
 music = true             # «Алиса, включи музыку» запускает Spotify (продолжает прошлую сессию), если ничего не играет
 music_uri = ""           # что включать, когда продолжать нечего: spotify:playlist:… (или album, artist, track); пусто — Алиса включит Яндекс
 web_proxy = ""           # прокси для Web API Spotify (лайки): http://хост:порт или socks5://хост:порт; нужен, если Spotify отвечает «unavailable in this country»
@@ -111,7 +118,14 @@ func init() {
 			if mm, ok := registry.Use[*mediad.Machine](env, "machine"); ok && mm != nil {
 				m = mm
 			}
-			return newComponent(*c, eng, m, env.Logf("spotify"), ctlsock.RunDir()), nil
+			comp := newComponent(*c, eng, m, env.Logf("spotify"), ctlsock.RunDir())
+			if ind, ok := registry.Use[led.Indicator](env, "led"); ok {
+				comp.led = ind
+			}
+			if f, ok := registry.Use[func()](env, "swallow-voice"); ok {
+				comp.swallow = f
+			}
+			return comp, nil
 		},
 	})
 }

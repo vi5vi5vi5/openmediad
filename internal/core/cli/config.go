@@ -13,12 +13,16 @@ import (
 var configCmd = Command{
 	Name:    "config",
 	Summary: "настройки: открыть в редакторе, проверить, прочитать или поменять ключ",
-	Usage:   "[check [ФАЙЛ] | get КЛЮЧ | set КЛЮЧ ЗНАЧЕНИЕ | show | path | reset [-yes]]",
+	Usage:   "[check [ФАЙЛ] | update | upgrade [-n] | get КЛЮЧ | set КЛЮЧ ЗНАЧЕНИЕ | show | path | reset [-yes]]",
 	Help: `Без аргументов — открыть настройки в редакторе ($EDITOR, иначе nano, иначе vi). После выхода файл проверяется:
 при ошибке показывается строка и причина и предлагается исправить; если всё верно — файл сохраняется, а работающий
 демон перечитывает настройки (что нельзя применить на ходу, применится после openmediad restart).
 
   check [ФАЙЛ]       проверить файл настроек (по умолчанию — действующий)
+  update             применить файл без перезапуска движка: проверить и отдать работающему демону (после правки через nano и т. п.);
+                     что нельзя применить на лету, команда назовёт — это применится после openmediad restart
+  upgrade [-n]       дописать в файл ключи и секции, которых в нём нет (новые версии добавляют настройки), с пояснениями из шаблона;
+                     ваши значения и комментарии не меняются, старый файл остаётся рядом с .bak. -n — только показать, что будет добавлено
   get КЛЮЧ           значение ключа с учётом умолчаний: openmediad config get general.log_level
   set КЛЮЧ ЗНАЧЕНИЕ  поменять один ключ (комментарии в файле сохраняются):
                        openmediad config set debug-page.enabled false
@@ -37,6 +41,10 @@ var configCmd = Command{
 		switch sub {
 		case "check":
 			return configCheck(c, rest)
+		case "update":
+			return configUpdate(c, rest)
+		case "upgrade":
+			return configUpgrade(c, rest)
 		case "get":
 			return configGet(c, rest)
 		case "set":

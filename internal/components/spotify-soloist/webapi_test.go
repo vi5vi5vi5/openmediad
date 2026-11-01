@@ -30,7 +30,9 @@ type fakeSpotify struct {
 	status     map[string]int
 	newRefresh string
 	badGrant   bool
-	geo        bool // api.spotify.com закрыт для страны: на любой запрос 403
+	geo        bool                         // api.spotify.com закрыт для страны: на любой запрос 403
+	searchJSON string                       // ответ на /search
+	searchFn   func(q, types string) string // ответ на /search в зависимости от запроса (если задан)
 }
 
 func newFakeSpotify(t *testing.T) *fakeSpotify {
@@ -92,6 +94,14 @@ func newFakeSpotify(t *testing.T) *fakeSpotify {
 			}
 			io := `{"error":{"status":` + "0" + `,"message":"нет такого"}}`
 			w.Write([]byte(io))
+			return
+		}
+		if r.URL.Path == "/v1/search" && f.searchFn != nil {
+			w.Write([]byte(f.searchFn(r.URL.Query().Get("q"), r.URL.Query().Get("type"))))
+			return
+		}
+		if r.URL.Path == "/v1/search" && f.searchJSON != "" {
+			w.Write([]byte(f.searchJSON))
 			return
 		}
 		if strings.HasSuffix(r.URL.Path, "/contains") {

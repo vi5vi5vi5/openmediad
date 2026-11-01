@@ -72,6 +72,7 @@ func newVoiceRig(t *testing.T, edit func(*Config)) *voiceRig {
 	srv := startWS(t)
 	r := &voiceRig{srv: srv, mach: &fakeMach{}}
 	cfg := *defaults()
+	cfg.Dir = t.TempDir() // привязки и вход лежат во временной папке, а не в системном пути
 	if edit != nil {
 		edit(&cfg)
 	}
@@ -259,7 +260,7 @@ func TestFailedCommandFallsBackToAlice(t *testing.T) {
 func TestVoiceConfigReloadsWithoutRestart(t *testing.T) {
 	r := newVoiceRig(t, nil)
 	r.state(t, "playing")
-	n := *defaults()
+	n := r.c.config()
 	n.Voice = false
 	if restart := r.c.Reload(&n); len(restart) != 0 {
 		t.Fatalf("voice требует перезапуска демона: %v", restart)

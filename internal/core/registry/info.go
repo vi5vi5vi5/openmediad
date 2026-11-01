@@ -63,6 +63,7 @@ const (
 	NeedInput       = "input-events"    // /dev/input: кнопки наушников
 	NeedMaster      = "alsa-master"     // регулятор громкости ALSA Master
 	NeedNetwork     = "network"         // сеть
+	NeedLogoFB      = "logo-fb"         // /dev/fb0: кольцо подсветки логотипа Станции Мини 3
 	NeedCP15Barrier = "cp15-barrier"    // abi.cp15_barrier = 2: старые 32-битные программы исполняют барьеры памяти ARMv6 аппаратно
 )
 

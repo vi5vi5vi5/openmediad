@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"openmediad/internal/core/audio"
+	"openmediad/internal/core/led"
 	"openmediad/internal/core/speaker/aplay"
 	"openmediad/internal/libs/bluez"
 	"openmediad/internal/libs/dbus"
@@ -169,6 +170,9 @@ func (s *Sink) Name() string { return "bt-out" }
 
 // Available — наушники подключены и у них есть PCM вывода. Быстро: читает снимок, который держит Start.
 func (s *Sink) Available() bool { return s.cur.Load() != nil }
+
+// LEDColor — цвет, которым подсветка показывает, что музыка идёт в наушники (синий; пользователь может поменять в [led-ring] colors).
+func (s *Sink) LEDColor() led.Color { return led.Color{R: 0, G: 96, B: 255} }
 
 // Open — поток движка в наушники: через смеситель. Канал открывает только serve (refresh), после того как транспорт
 // спрятан от платформы; если канала сейчас нет, поток идёт на следующий выход маршрута, а когда канал откроется —
