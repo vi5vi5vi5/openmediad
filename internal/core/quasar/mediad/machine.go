@@ -59,6 +59,11 @@ type Machine struct {
 	byTrack  map[string]string // трек → id его плеера на паузе (кэш mediad)
 	foreign  map[string]bool   // плееры, которые ведёт настоящий mediad (откат): их команды не перехватываются
 	ducked   bool
+	vp       *vplayer     // виртуальный плеер (virtual.go)
+	vcmd     func(string) // кому адресуются команды платформы виртуальному плееру
+
+	carrierUntil time.Time // до какого момента следующий запуск музыки платформой достаётся Spotify (ArmCarrier)
+	carrier      *Meta     // плеер платформы, ожидающий состояния Spotify
 }
 
 // Playing — играет ли сейчас музыка, которую ведёт автомат (запускается или звучит; не на паузе).
@@ -121,6 +126,9 @@ func (m *Machine) init() {
 // пересылать её не нужно. Команды чужих плееров, голос и всё незнакомое возвращают false.
 func (m *Machine) Handle(ctx any, c msg.AudioCommand) bool {
 	p := c.Player()
+	if p.Kind == msg.PlayerAudio && m.isVirtual(p.ID) {
+		return m.virtualCommand(c)
+	}
 	switch k := c.Classify(); k {
 	case msg.CmdFocus:
 		on, _ := pb.Uint(c, 39)
@@ -137,6 +145,9 @@ func (m *Machine) Handle(ctx any, c msg.AudioCommand) bool {
 		}
 		return m.fileStart(ctx, c)
 	case msg.CmdPlay, msg.CmdPrefetch:
+		if p.Kind == msg.PlayerAudio && m.carrierArmed() {
+			return m.adoptCommand(k, c)
+		}
 		if m.NoMusic || p.Kind != msg.PlayerAudio || m.isForeign(p.ID) {
 			return false
 		}
@@ -236,6 +247,9 @@ func (m *Machine) Handoff() {
 		vids = append(vids, id)
 		m.note("handoff", id, "шим останавливается: ответ Алисы прерван")
 	}
+	if ev := m.handoffVirtual(); ev != nil {
+		evs = append(evs, ev)
+	}
 	fhs, fstop, fevs := m.handoffFiles()
 	evs = append(evs, fevs...)
 	m.mu.Unlock()
@@ -284,6 +298,14 @@ func (m *Machine) Snapshot() []PlayerInfo {
 			name = "голос: закончил"
 		}
 		out = append(out, PlayerInfo{ID: id[:min(8, len(id))], State: name, Title: "ответ Алисы", PosMs: m.Voice.Pos(id)})
+	}
+	if vp := m.vp; vp != nil {
+		name := "виртуальный: играет"
+		if vp.st != stPlaying {
+			name = "виртуальный: на паузе"
+		}
+		out = append(out, PlayerInfo{ID: vp.meta.Player.ID[:8], State: name, Track: vp.track, Title: TrackOf(vp.meta.Desc).Title,
+			PosMs: vp.pos(m.Now()), DurMs: vp.durMs})
 	}
 	out = append(out, m.fileInfos()...)
 	return out

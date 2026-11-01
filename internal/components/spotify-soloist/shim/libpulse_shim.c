@@ -4,12 +4,24 @@
  * Soloist на Linux делает dlopen("libpulse.so.0") и берёт 48 функций pa_* (список снят со строк его бинарника).
  * Здесь они реализованы так, чтобы клиент видел «настоящий» сервер: потоковый mainloop, контекст, поток воспроизведения,
  * громкость, пауза, flush, тайминги. Звук (float32 или s16) пересчитывается в S16LE и уходит
- *   — в `aplay` (по умолчанию, запускается на каждое подключение потока), или
- *   — в FIFO/файл (OMD_PCM_FIFO), откуда его заберёт движок openmediad.
+ *   — в unix-сокет движка openmediad (OMD_PCM_SOCK): основной режим, см. «Протокол сокета» ниже;
+ *   — в `aplay` (запасной режим для опытов, запускается на каждое подключение потока), или
+ *   — в FIFO/файл (OMD_PCM_FIFO).
+ *
+ * Протокол сокета (все числа little-endian). Шим подключается к сокету, когда поток начинает отдавать звук, и шлёт:
+ *   привет, 10 байт:  "OMDP", версия u8 (=1), каналы u8, частота u32 (формат всегда S16LE, кадр = каналы * 2 байта);
+ *   затем кадры:      тип u8, длина u32, данные:
+ *     0x01 DATA    звук S16LE (уже с громкостью Soloist); кадр целиком кратен размеру отсчёта всех каналов
+ *     0x02 FLUSH   всё, что пришло раньше, выбросить (перемотка, смена трека)
+ *     0x03 CORK    1 байт: 1 — пауза (звук не идёт), 0 — продолжение
+ *     0x04 VOLUME  2 байта u16: усиление в тысячных (1000 = как есть); только для сведения
+ *   Сразу после привета шим повторяет текущее состояние (CORK и VOLUME). Закрытие сокета = конец потока.
+ *   Все кадры, кроме DATA, ставятся в очередь и уходят из потока-писателя: вызовы pa_* от Soloist не блокируются на сокете.
  *
  * Код написан по публичному API PulseAudio (заголовки каталога pulse) без заимствований из чужих шимов.
  *
  * Настройки окружения (все необязательные):
+ *   OMD_PCM_SOCK         путь unix-сокета движка openmediad (основной режим)
  *   OMD_PCM_DEV          устройство aplay (по умолчанию "default")
  *   OMD_PCM_APLAY_ARGS   дополнительные аргументы aplay через пробел (по умолчанию "--buffer-time=150000")
  *   OMD_PCM_CMD          своя команда вместо aplay (через /bin/sh -c; переменные OMD_PCM_RATE, OMD_PCM_CHANNELS)
@@ -34,14 +46,23 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/ioctl.h>
+#include <sys/socket.h>
 #include <sys/time.h>
+#include <sys/un.h>
 #include <sys/wait.h>
 #include <time.h>
 #include <unistd.h>
 
 extern char **environ;
 
-#define SHIM_VERSION "0.1"
+#define SHIM_VERSION "0.2"
+
+/* типы кадров сокета (см. «Протокол сокета» в шапке) */
+#define FR_DATA 0x01
+#define FR_FLUSH 0x02
+#define FR_CORK 0x03
+#define FR_VOLUME 0x04
+#define CTLQ 16
 #define RING_MS 500    /* буфер потока, мс */
 #define CHUNK_FRAMES 2048
 
@@ -231,12 +252,15 @@ static float gain_from(pa_volume_t v) {
 	return (float)x;
 }
 
+static void vol_notify(void);
+
 static void vol_set(const pa_cvolume *cv) {
 	g_cv = *cv;
 	g_cv_init = 1;
 	g_gain = gain_from(pa_cvolume_avg(cv));
 	LOG("громкость: avg=%u -> gain=%.3f (режим %s)", (unsigned)pa_cvolume_avg(cv), g_gain,
 	    g_volmode == 0 ? "linear" : g_volmode == 1 ? "cubic" : "off");
+	vol_notify();
 }
 
 pa_cvolume *pa_cvolume_set(pa_cvolume *a, unsigned channels, pa_volume_t v) {
@@ -357,6 +381,11 @@ struct pa_stream {
 	int out_fd;
 	volatile pid_t child;
 	pa_timing_info ti;
+
+	int sockmode;                /* вывод в сокет движка (OMD_PCM_SOCK) */
+	uint8_t ctlq[CTLQ];          /* очередь управляющих кадров сокета (под rm) */
+	uint16_t ctla[CTLQ];
+	int nctl;
 };
 
 static pa_stream *g_stream;
@@ -394,6 +423,10 @@ pa_stream *pa_stream_new_with_proplist(pa_context *c, const char *name, const pa
 	s->out_fs = ss->channels * 2;
 	s->idx = 100;
 	s->out_fd = -1;
+	{
+		const char *sk = getenv("OMD_PCM_SOCK");
+		s->sockmode = sk && *sk;
+	}
 	pthread_mutex_init(&s->rm, NULL);
 	pthread_cond_init(&s->rc, NULL);
 	LOG("pa_stream_new(%s): формат=%s %u Гц %u кан.", name ? name : "", ss->format == PA_SAMPLE_FLOAT32LE ? "float32le" : "s16le", ss->rate,
@@ -462,7 +495,11 @@ static void out_close(pa_stream *s, int term) {
 	}
 }
 
+static int sock_connect(pa_stream *s);
+
 static int out_open(pa_stream *s) {
+	if (s->sockmode)
+		return sock_connect(s);
 	const char *fifo = getenv("OMD_PCM_FIFO");
 	if (fifo && *fifo) {
 		int fd = open(fifo, O_WRONLY | O_CLOEXEC);
@@ -552,6 +589,91 @@ static int write_all(int fd, const void *buf, size_t n) {
 	return 0;
 }
 
+/* ---------- сокет движка ---------- */
+
+static int send_frame(int fd, uint8_t type, const void *p, uint32_t n) {
+	uint8_t h[5] = {type, (uint8_t)n, (uint8_t)(n >> 8), (uint8_t)(n >> 16), (uint8_t)(n >> 24)};
+	if (write_all(fd, h, sizeof h) < 0)
+		return -1;
+	return n ? write_all(fd, p, n) : 0;
+}
+
+static int send_ctl(pa_stream *s, uint8_t type, uint16_t arg) {
+	uint8_t b[2];
+	uint32_t n = 0;
+	if (type == FR_CORK) {
+		b[0] = (uint8_t)arg;
+		n = 1;
+	} else if (type == FR_VOLUME) {
+		b[0] = (uint8_t)arg;
+		b[1] = (uint8_t)(arg >> 8);
+		n = 2;
+	}
+	return send_frame(s->out_fd, type, b, n);
+}
+
+/* поставить управляющий кадр в очередь писателя; вызывать под s->rm */
+static void ctl_push(pa_stream *s, uint8_t type, uint16_t arg) {
+	if (s->nctl >= CTLQ) {
+		DBG("очередь управляющих кадров полна: тип %u потерян", (unsigned)type);
+		return;
+	}
+	s->ctlq[s->nctl] = type;
+	s->ctla[s->nctl] = arg;
+	s->nctl++;
+	pthread_cond_signal(&s->rc);
+}
+
+static uint16_t gain_permille(void) { return (uint16_t)(g_gain * 1000.0f + 0.5f); }
+
+/* громкость Soloist изменилась: сообщить движку (для сведения) */
+static void vol_notify(void) {
+	pa_stream *s = g_stream;
+	if (s && s->sockmode) {
+		pthread_mutex_lock(&s->rm);
+		ctl_push(s, FR_VOLUME, gain_permille());
+		pthread_mutex_unlock(&s->rm);
+	}
+}
+
+static int sock_connect(pa_stream *s) {
+	const char *path = getenv("OMD_PCM_SOCK");
+	struct sockaddr_un sa;
+	memset(&sa, 0, sizeof sa);
+	sa.sun_family = AF_UNIX;
+	if (!path || !*path || strlen(path) >= sizeof sa.sun_path) {
+		LOG("OMD_PCM_SOCK пуст или слишком длинный");
+		return -1;
+	}
+	strcpy(sa.sun_path, path);
+	int fd = socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
+	if (fd < 0)
+		return -1;
+	int sz = 32768; /* небольшой буфер отправки: задержка до движка не больше ≈0,2 с */
+	setsockopt(fd, SOL_SOCKET, SO_SNDBUF, &sz, sizeof sz);
+	if (connect(fd, (struct sockaddr *)&sa, sizeof sa) < 0) {
+		LOG("сокет движка %s: %s", path, strerror(errno));
+		close(fd);
+		return -1;
+	}
+	uint32_t r = s->ss.rate;
+	uint8_t h[10] = {'O', 'M', 'D', 'P', 1, (uint8_t)s->ss.channels, (uint8_t)r, (uint8_t)(r >> 8), (uint8_t)(r >> 16), (uint8_t)(r >> 24)};
+	if (write_all(fd, h, sizeof h) < 0) {
+		close(fd);
+		return -1;
+	}
+	s->out_fd = fd;
+	pthread_mutex_lock(&s->rm);
+	int corked = s->corked;
+	pthread_mutex_unlock(&s->rm);
+	if (send_ctl(s, FR_CORK, (uint16_t)corked) < 0 || send_ctl(s, FR_VOLUME, gain_permille()) < 0) {
+		out_close(s, 0);
+		return -1;
+	}
+	LOG("вывод: сокет движка %s, %u Гц %u кан.", path, s->ss.rate, s->ss.channels);
+	return 0;
+}
+
 static void convert(const pa_stream *s, const uint8_t *in, size_t frames, int16_t *out, float gain) {
 	size_t samples = frames * s->ss.channels;
 	if (s->ss.format == PA_SAMPLE_FLOAT32LE) {
@@ -588,7 +710,7 @@ static void *writer_main(void *arg) {
 	for (;;) {
 		pthread_mutex_lock(&s->rm);
 		for (;;) {
-			if (s->quit || s->reset_out)
+			if (s->quit || s->reset_out || s->nctl > 0)
 				break;
 			if (!s->corked && s->len > 0)
 				break;
@@ -615,6 +737,21 @@ static void *writer_main(void *arg) {
 			s->reset_out = 0;
 			pthread_mutex_unlock(&s->rm);
 			out_close(s, 1);
+			continue;
+		}
+		if (s->nctl > 0) {
+			uint8_t t = s->ctlq[0];
+			uint16_t a = s->ctla[0];
+			s->nctl--;
+			memmove(s->ctlq, s->ctlq + 1, (size_t)s->nctl);
+			memmove(s->ctla, s->ctla + 1, (size_t)s->nctl * sizeof s->ctla[0]);
+			pthread_mutex_unlock(&s->rm);
+			/* не подключены — кадр не нужен: состояние (пауза, громкость) повторится при подключении */
+			if (s->out_fd >= 0 && send_ctl(s, t, a) < 0) {
+				LOG("запись в сокет не удалась: %s; переподключение", strerror(errno));
+				out_close(s, 0);
+				next_spawn = now_ms() + 500;
+			}
 			continue;
 		}
 		size_t n = s->len < chunk ? s->len : chunk;
@@ -655,7 +792,9 @@ static void *writer_main(void *arg) {
 		convert(s, in, frames, out, g_gain);
 		if (gen != s->gen) /* пока конвертировали, пришёл flush: кусок устарел */
 			continue;
-		if (write_all(s->out_fd, out, frames * s->out_fs) < 0) {
+		int wrc = s->sockmode ? send_frame(s->out_fd, FR_DATA, out, (uint32_t)(frames * s->out_fs))
+				      : write_all(s->out_fd, out, frames * s->out_fs);
+		if (wrc < 0) {
 			int err = errno;
 			if (gen != __atomic_load_n(&s->gen, __ATOMIC_ACQUIRE) || __atomic_load_n(&s->reset_out, __ATOMIC_ACQUIRE)) {
 				out_close(s, 1); /* обрыв из-за flush: ожидаемо, без штрафа */
@@ -758,6 +897,8 @@ pa_operation *pa_stream_cork(pa_stream *s, int b, pa_stream_success_cb_t cb, voi
 	s->corked = b ? 1 : 0;
 	if (!b)
 		s->started = 0; /* после снятия паузы снова сообщим «воспроизведение началось» */
+	if (s->sockmode)
+		ctl_push(s, FR_CORK, (uint16_t)s->corked);
 	pthread_cond_signal(&s->rc);
 	pthread_mutex_unlock(&s->rm);
 	LOG("cork=%d", b ? 1 : 0);
@@ -776,7 +917,10 @@ pa_operation *pa_stream_flush(pa_stream *s, pa_stream_success_cb_t cb, void *use
 	s->gen++;
 	s->started = 0;
 	s->underflow_sent = 0;
-	s->reset_out = 1; /* то, что уже ушло в aplay, тоже обрываем */
+	if (s->sockmode)
+		ctl_push(s, FR_FLUSH, 0); /* движок выбросит то, что уже принял */
+	else
+		s->reset_out = 1; /* то, что уже ушло в aplay, тоже обрываем */
 	pid_t ch = s->child;
 	pthread_cond_signal(&s->rc);
 	pthread_mutex_unlock(&s->rm);
@@ -811,7 +955,7 @@ static void ti_refresh(pa_stream *s) {
 	pthread_mutex_unlock(&s->rm);
 	int unread = 0;
 	int fd = s->out_fd;
-	if (fd >= 0 && ioctl(fd, FIONREAD, &unread) < 0)
+	if (fd >= 0 && ioctl(fd, s->sockmode ? TIOCOUTQ : FIONREAD, &unread) < 0)
 		unread = 0;
 	int64_t pending_in = (int64_t)unread * (int64_t)s->in_fs / (int64_t)s->out_fs;
 	int64_t ridx = (int64_t)rd - pending_in;

@@ -11,5 +11,9 @@
 | [`bt-command/`](bt-command/README.md) | команда терминала `openmediad bt` | приходит вместе с `bt-out` или `bt-in` |
 | [`alsactl/`](alsactl/README.md) | регулятор громкости ALSA (Master) и статус PCM | `bt-out`, инструменты разработчика |
 | [`aliced-client/`](aliced-client/README.md) | клиент aliced: пауза, «дальше», текстовый запрос Алисе | `bt-out` |
+| [`pcmstream/`](pcmstream/README.md) | звук от чужого процесса как источник движка (буфер, flush, возврат при паузе) | `spotify-soloist` |
+| [`wsclient/`](wsclient/README.md) | клиент WebSocket | `spotify-soloist` |
+| [`volmap/`](volmap/README.md) | таблица громкости платформы: уровень 0–20 ↔ Master | `bt-out`, `spotify-soloist` |
+| [`debpkg/`](debpkg/README.md) | файлы из пакета .deb (ar + xz) | `spotify-soloist` |
 
 Библиотеки могут импортировать только `core` и друг друга; компоненты — не наоборот.

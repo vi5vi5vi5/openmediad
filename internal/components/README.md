@@ -16,6 +16,7 @@
 | [`debug-profiler/`](debug-profiler/README.md) | Профилировщик Go | вспомогательный | нет |
 | [`bt-out/`](bt-out/README.md) | Bluetooth-наушники: вывод звука | необязательный | нет |
 | [`bt-in/`](bt-in/README.md) | Bluetooth: звук с телефона | необязательный | нет |
+| [`spotify-soloist/`](spotify-soloist/README.md) | Spotify (Soloist) | необязательный | нет |
 
 Служебные папки (это не компоненты): [`catalog/`](catalog/README.md) — таблица паспортов; [`included/`](included/README.md) — что войдёт в бинарник.
 

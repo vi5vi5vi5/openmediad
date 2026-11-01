@@ -34,9 +34,14 @@ type Observer struct {
 	// OnReply, если задан, получает имена директив ответа Алисы (из AliceState aliced; один ответ приходит в нескольких
 	// состояниях — req одинаковый).
 	OnReply func(req string, directives []string)
+	// OnPhrase, если задан, получает окончательную фразу пользователя (AliceState.FinalPhrase): один раз на запрос, примерно на секунду
+	// раньше ответа облака. Вызывается из цикла чтения: обработчик не должен блокироваться.
+	// fast — быстрая команда платформы без слова «Алиса» (msg.AliceState.FastPhrase): ответ придёт через ≈30 мс и будет беззвучным.
+	OnPhrase func(req, text string, fast bool)
 
-	mu     sync.Mutex
-	counts map[string]int
+	mu      sync.Mutex
+	counts  map[string]int
+	phrased []string // последние запросы, чьи фразы уже отданы OnPhrase
 }
 
 func (o *Observer) Run(ctx context.Context) error {
@@ -112,6 +117,11 @@ func (o *Observer) read(t Target, conn net.Conn) error {
 		if line, show := Describe(t.Name, m, o.Opt); show {
 			o.logf(t.Name, "%s", line)
 		}
+		if o.OnPhrase != nil && m.Type == wire.TypeAliceState {
+			if req, text, fast, ok := msg.AliceState(m.Body).Phrase(); ok && o.firstPhrase(req) {
+				o.OnPhrase(req, text, fast)
+			}
+		}
 		if o.OnReply != nil && m.Type == wire.TypeAliceState {
 			s := msg.AliceState(m.Body)
 			if _, js, ok := s.Reply(); ok {
@@ -119,6 +129,22 @@ func (o *Observer) read(t Target, conn net.Conn) error {
 			}
 		}
 	}
+}
+
+// firstPhrase — фраза этого запроса ещё не отдавалась (одна и та же приходит в нескольких состояниях Алисы).
+func (o *Observer) firstPhrase(req string) bool {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	for _, r := range o.phrased {
+		if r == req {
+			return false
+		}
+	}
+	o.phrased = append(o.phrased, req)
+	if len(o.phrased) > 16 {
+		o.phrased = o.phrased[1:]
+	}
+	return true
 }
 
 func (o *Observer) statsLoop(ctx context.Context) {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"openmediad/internal/core/config"
 	"openmediad/internal/core/ctlsock"
 	"openmediad/internal/core/engine"
 	"openmediad/internal/core/journal"
@@ -38,6 +39,16 @@ type (
 	dialogLogger interface{ LogsDialog() bool }
 	// arrivalNotifier — выход, который сообщает, что стал доступен (например, подключились наушники).
 	arrivalNotifier interface{ OnArrival(func()) }
+	// configReloader — компонент применяет изменённые настройки на ходу (openmediad config set → reload) и возвращает ключи,
+	// которым нужен перезапуск демона.
+	configReloader interface {
+		Reload(cfg any) (restart []string)
+	}
+	// phraseInterceptor — компонент перехватывает окончательные фразы пользователя раньше, чем ответит облако. true — фраза его:
+	// демон гасит ответ облака голосом (шлюз); отменить диалог компонент может сам. fast — быстрая команда платформы («пауза» без «Алиса»).
+	phraseInterceptor interface {
+		InterceptPhrase(reqID, text string, fast bool) (handled bool)
+	}
 )
 
 // startComponents создаёт включённые компоненты сборки и подключает их: бэкенды — к автомату mediad, модули — запускает.
@@ -105,7 +116,8 @@ func (d *daemon) attach(c *component) {
 	case mediad.Backend:
 		d.m.Back, d.m.NoMusic = b, false
 	case mediad.VoiceBackend:
-		d.m.Voice = b
+		d.gate = newVoiceGate(b, d.m)
+		d.m.Voice = d.gate
 	case mediad.FileBackend:
 		d.m.File = b
 		if a, ok := c.obj.(fileAccepter); ok {
@@ -143,6 +155,34 @@ func (d *daemon) components() []ctlsock.ComponentStatus {
 		}
 	}
 	return out
+}
+
+// reloadComponents отдаёт новые настройки работающим компонентам, которые умеют применять их на ходу; возвращает, что из
+// изменённого требует перезапуска демона («имя.ключ»).
+func (d *daemon) reloadComponents(cfg *config.Config) []string {
+	type live struct {
+		name string
+		obj  any
+	}
+	var list []live
+	d.mu.Lock()
+	for _, c := range d.comps {
+		if c.obj != nil && c.err == nil {
+			list = append(list, live{c.name, c.obj})
+		}
+	}
+	d.mu.Unlock()
+	var restart []string
+	for _, l := range list {
+		r, ok := l.obj.(configReloader)
+		if !ok || !cfg.Enabled(l.name) {
+			continue
+		}
+		for _, k := range r.Reload(cfg.Components[l.name]) {
+			restart = append(restart, l.name+"."+k)
+		}
+	}
+	return restart
 }
 
 // dialogLogEnabled — хоть один включённый компонент просит писать реплики диалога с Алисой в журнал.

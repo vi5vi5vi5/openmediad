@@ -28,6 +28,7 @@ func (d *daemon) watchAliced(ctx context.Context, logLines bool) {
 				d.directive(name)
 			}
 		},
+		OnPhrase: func(req, text string, fast bool) { d.phrase(req, text, fast, logLines) },
 		OnLine: func(who, text string) {
 			if !logLines {
 				return
@@ -56,6 +57,46 @@ func (d *daemon) watchAliced(ctx context.Context, logLines bool) {
 		},
 	}
 	go o.Run(ctx)
+}
+
+// phrase отдаёт окончательную фразу компонентам-перехватчикам по очереди: тот, кто взял её, выполняет её сам, а ответ облака голосом
+// гасится (шлюз). Саму фразу в журнал пишет только режим диалога (logLines): фразы приватны.
+func (d *daemon) phrase(req, text string, fast, logLines bool) {
+	type taker struct {
+		name string
+		h    phraseInterceptor
+	}
+	var takers []taker
+	d.mu.Lock()
+	gate := d.gate
+	for _, c := range d.comps {
+		if h, ok := c.obj.(phraseInterceptor); ok && c.err == nil {
+			takers = append(takers, taker{c.name, h})
+		}
+	}
+	d.mu.Unlock()
+	taken := false
+	defer func() {
+		if !taken && gate != nil {
+			gate.Clear() // ответ на эту фразу должен прозвучать, даже если прошлую перехватили секунду назад
+		}
+	}()
+	for _, t := range takers {
+		if !t.h.InterceptPhrase(req, text, fast) {
+			continue
+		}
+		taken = true
+		if gate != nil && !fast { // ответ быстрой команды беззвучный и приходит через 30 мс: гасить в нём нечего
+			gate.Swallow()
+		}
+		var detail map[string]any
+		if logLines {
+			detail = map[string]any{"фраза": text}
+		}
+		d.j.Log(journal.Info, "aliced", "фраза перехвачена компонентом "+t.name,
+			"Компонент выполнил её сам; ответ облака голосом гасится, чтобы Алиса не отвечала поверх.", detail)
+		return
+	}
 }
 
 // directive передаёт имя директивы ответа Алисы компонентам, которым это интересно.

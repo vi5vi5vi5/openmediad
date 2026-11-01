@@ -59,6 +59,7 @@ go run ./tools/build -deploy 192.168.1.12    # собрать и залить н
 | `debug-profiler` | профилировщик Go на порту отладки | вспомогательный | нет |
 | `bt-out` | вывод звука в Bluetooth-наушники (опытный) | необязательный | нет |
 | `bt-in` | звук с телефона по Bluetooth через движок (опытный) | необязательный | нет |
+| `spotify-soloist` | Spotify Connect через официальный Soloist, звук идёт через движок (опытный; меняет `abi.cp15_barrier`, см. паспорт) | необязательный | нет |
 
 Подробно — [docs/COMPONENTS.md](docs/COMPONENTS.md).
 
@@ -97,6 +98,7 @@ ssh -p 2222 root@<адрес-колонки>
 - [docs/MUSIC-PLAN.md](docs/MUSIC-PLAN.md) — план подключения Spotify и других сервисов: варианты и опыты.
 - [docs/research/](docs/research/) — разбор шины Quasar и журнал экспериментов, из которых вырос проект.
 - [THIRD_PARTY.md](THIRD_PARTY.md) — сторонний код и лицензии.
+- [LICENSE](LICENSE) — лицензия проекта (MIT).
 
 ## Разработка
 

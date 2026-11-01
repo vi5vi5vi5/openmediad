@@ -15,6 +15,7 @@ import (
 	_ "openmediad/internal/components/debug-page"
 	_ "openmediad/internal/components/debug-profiler"
 	_ "openmediad/internal/components/display-spectrum"
+	_ "openmediad/internal/components/spotify-soloist"
 	_ "openmediad/internal/components/system-sounds"
 	_ "openmediad/internal/components/yandex-music"
 

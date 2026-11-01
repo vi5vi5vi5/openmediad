@@ -254,3 +254,34 @@ func TestHandshake(t *testing.T) {
 		t.Errorf("%v", f)
 	}
 }
+
+// Быстрая команда: «пауза» без «Алиса» приходит сразу в BUSY, поле 2 пустое, текст только в ASR (снято с колонки 01.11.2026).
+func TestFastPhrase(t *testing.T) {
+	fast := aliceState(3, "", reqID, asr("пауза", 1, 0))
+	if id, text, ok := fast.FastPhrase(); !ok || id != reqID || text != "пауза" {
+		t.Fatalf("быстрая команда: %q %q %v", id, text, ok)
+	}
+	if _, _, ok := fast.FinalPhrase(); ok {
+		t.Error("быстрая команда не должна считаться обычной окончательной фразой")
+	}
+	if id, text, f, ok := fast.Phrase(); !ok || !f || id != reqID || text != "пауза" {
+		t.Errorf("Phrase быстрой команды: %q %q %v %v", id, text, f, ok)
+	}
+	normal := aliceState(1, "Включи музыку", reqID, asr("Включи музыку", 1, 1))
+	if id, text, f, ok := normal.Phrase(); !ok || f || id != reqID || text != "Включи музыку" {
+		t.Errorf("Phrase обычной фразы: %q %q %v %v", id, text, f, ok)
+	}
+	for name, s := range map[string]AliceState{
+		"LISTENING":        aliceState(1, "", reqID, asr("пауза", 1, 0)),
+		"не окончательная": aliceState(3, "", reqID, asr("пау", 0, 0)),
+		"поле 2 не пустое": aliceState(3, "Пауза", reqID, asr("пауза", 1, 0)),
+		"нет ASR":          aliceState(3, "", reqID, nil),
+		"пустой текст":     aliceState(3, "", reqID, asr("", 1, 0)),
+		"короткий запрос":  aliceState(3, "", "abc", asr("пауза", 1, 0)),
+		"IDLE":             aliceState(0, "", reqID, asr("пауза", 1, 0)),
+	} {
+		if _, _, ok := s.FastPhrase(); ok {
+			t.Errorf("%s: не быстрая команда", name)
+		}
+	}
+}

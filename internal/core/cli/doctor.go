@@ -283,6 +283,12 @@ func checkNeed(id string) (present, known bool) {
 		return port("127.0.0.1:9903")
 	case registry.NeedAliced:
 		return port("127.0.0.1:9875")
+	case registry.NeedCP15Barrier:
+		b, err := os.ReadFile(layout.Root + "/proc/sys/abi/cp15_barrier")
+		if err != nil {
+			return false, false // не колонка (или другое ядро): проверять нечем
+		}
+		return strings.TrimSpace(string(b)) == "2", true
 	}
 	return false, false
 }

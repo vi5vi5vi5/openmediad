@@ -95,6 +95,9 @@ func printPassport(c *Ctx, info registry.Info) {
 	if len(info.NeedsComponents) > 0 {
 		c.Printf("    нужно от компонентов: %s\n", listOrNone(info.NeedsComponents))
 	}
+	if info.Notice != "" {
+		c.Printf("    ВНИМАНИЕ: %s\n", info.Notice)
+	}
 	if info.WithoutIt != "" {
 		c.Printf("    если убрать: %s\n", info.WithoutIt)
 	}

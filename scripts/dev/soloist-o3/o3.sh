@@ -80,7 +80,7 @@ done
 
 case ${1:-help} in
 deploy) deploy ;;
-build-shim) sh "$here/shim/build.sh" ;;
+build-shim) sh "$here/../../../internal/components/spotify-soloist/shim/build.sh" ;;
 setkey)
 	[ -t 0 ] && { echo "ключ читается со stdin: o3.sh setkey < файл_с_ключом" >&2; exit 1; }
 	$SSH "umask 077; mkdir -p $R && cat > $R/api.key && chmod 600 $R/api.key && wc -c < $R/api.key"

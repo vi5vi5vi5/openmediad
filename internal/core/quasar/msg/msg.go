@@ -113,6 +113,42 @@ func (s AliceState) FinalPhrase() (reqID, text string, ok bool) {
 	return reqID, text, true
 }
 
+// FastPhrase — «быстрая команда»: короткая фраза без слова «Алиса» («пауза», «дальше», «играй» во время музыки). Платформа узнаёт её
+// у себя (командный спотер) и сразу отвечает сама, без облака: AliceState приходит сразу в BUSY, поле 2 пустое, а текст лежит только
+// в ASR (15.1, 15.2 == 1, 15.4 == 0). Ответ с директивами приходит через ≈30 мс, отменять диалог поздно (и незачем: ответ беззвучный).
+func (s AliceState) FastPhrase() (reqID, text string, ok bool) {
+	if s.Kind() != Busy || s.Text() != "" {
+		return "", "", false
+	}
+	asr, found := pb.Bytes(s, 15)
+	if !found {
+		return "", "", false
+	}
+	if f, _ := pb.Uint(asr, 2); f != 1 {
+		return "", "", false
+	}
+	text, _ = pb.Str(asr, 1)
+	if text == "" || len(text) > 512 {
+		return "", "", false
+	}
+	reqID = s.RequestID()
+	if len(reqID) != 36 {
+		return "", "", false
+	}
+	return reqID, text, true
+}
+
+// Phrase — окончательная фраза любого вида: обычная (FinalPhrase) или быстрая команда (FastPhrase, fast == true).
+func (s AliceState) Phrase() (reqID, text string, fast, ok bool) {
+	if reqID, text, ok = s.FinalPhrase(); ok {
+		return reqID, text, false, true
+	}
+	if reqID, text, ok = s.FastPhrase(); ok {
+		return reqID, text, true, true
+	}
+	return "", "", false, false
+}
+
 // Reply — ответ облака (поле 3): произносимый текст и JSON с директивами (поле 3.5).
 func (s AliceState) Reply() (speech string, directivesJSON []byte, ok bool) {
 	b, ok := pb.Bytes(s, 3)

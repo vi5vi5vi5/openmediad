@@ -148,6 +148,7 @@ func (d *daemon) reload() (string, error) {
 			restart = append(restart, "компонент "+c.Name)
 		}
 	}
+	restart = append(restart, d.reloadComponents(cfg)...)
 	for _, w := range cfg.Warnings {
 		d.j.Log(journal.Warn, "system", "настройки: "+w, "", nil)
 	}

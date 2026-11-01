@@ -87,3 +87,22 @@ func TestAsk(t *testing.T) {
 		t.Fatalf("объект %q", obj)
 	}
 }
+
+func TestCancelSendsCancelDialog(t *testing.T) {
+	c, got := fakeAliced(t, true)
+	if err := c.Cancel(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	var cancel bool
+	for m := range got {
+		if m.Type == wire.TypeRemoting {
+			if obj, _ := pb.Str(m.Body, 7); obj == "AliceCapability" {
+				cancel = true
+				break
+			}
+		}
+	}
+	if !cancel {
+		t.Fatal("кадр отмены диалога (AliceCapability) не пришёл")
+	}
+}

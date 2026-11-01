@@ -63,6 +63,7 @@ type daemon struct {
 	comps   []*component
 	closers []func()
 	dup     dedup
+	gate    *voiceGate // шлюз голоса Алисы (nil, пока голос играет не движок)
 }
 
 // Run запускает демон и работает, пока не придёт SIGTERM или SIGINT (или не отменён ctx). Ошибка — демон не смог стартовать.

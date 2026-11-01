@@ -179,6 +179,7 @@ func (m *Machine) Prefetch(ctx any, c msg.AudioCommand) {
 
 // Play — команда play. Возвращает false, если запуск отдан настоящему mediad (открыть поток не удалось).
 func (m *Machine) Play(ctx any, c msg.AudioCommand) bool {
+	m.dropAdopted()                         // настоящая музыка платформы вытесняет занятый под Spotify плеер
 	c = append(msg.AudioCommand(nil), c...) // буфер кадра принадлежит шиму и будет переиспользован
 	m.mu.Lock()
 	m.init()
@@ -318,6 +319,24 @@ func (m *Machine) Pause(id string) {
 	m.mu.Unlock()
 	m.Back.Pause(id)
 	m.schedule(&in.t, nil, pausedDelay, func() { m.paused(id) })
+}
+
+// PauseAll ставит на паузу все играющие плееры, как команда pause от платформы (PAUSED уйдёт платформе через pausedDelay).
+// Нужна, когда место музыки занял другой источник (Spotify): иначе платформа продолжала бы считать, что музыка Яндекса играет.
+// Возвращает, сколько плееров остановлено.
+func (m *Machine) PauseAll() int {
+	m.mu.Lock()
+	var ids []string
+	for id, in := range m.players {
+		if in.st == stPlaying || in.st == stStarting {
+			ids = append(ids, id)
+		}
+	}
+	m.mu.Unlock()
+	for _, id := range ids {
+		m.Pause(id)
+	}
+	return len(ids)
 }
 
 // Release — команда release: отмена prefetch либо освобождение плеера.

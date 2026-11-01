@@ -383,7 +383,7 @@ client_id = ""           # ключ Soloist и токены только фай�
 - **[проверено, уточнено]** Без `-C` Soloist **не стартует** (пытается создать `/root/.cache` на ro-корне: «cannot create cache directory … Use --cache-dir»), со `-C` каталог создаётся и остаётся пустым, а индекс хранилища и строка журнала `cache_path` указывают на `<data-dir>/cache`. **Куда пойдёт звуковой кэш при игре — не проверено** (воспроизведения не было); ранее записанное «`--cache-dir` игнорируется» было слишком сильным. Минимум `--cache-size` 100 МБ, лимит нестрогий (spotify/soloist#8). При запуске через явный загрузчик Crashpad не стартует (`unrecognized option '--type=crashpad-handler'`, «install crash handler: NO»); лечится `patchelf` интерпретатора или обёрткой, не проверялось.
 - **Символы для шима libpulse** (48 строк `pa_*` из бинарника, Soloist делает `dlopen("libpulse.so.0")`): `pa_context_{connect,disconnect,errno,get_sink_input_info,get_state,new,set_sink_input_volume,set_state_callback,set_subscribe_callback,subscribe,unref}`, `pa_cvolume_{avg,set}`, `pa_gettimeofday`, `pa_operation_{get_state,unref}`, `pa_proplist_{free,new,sets}`, `pa_stream_{connect_playback,cork,disconnect,flush,get_index,get_state,get_timing_info,is_corked,new,new_with_proplist,set_started_callback,set_state_callback,set_underflow_callback,unref,update_timing_info,writable_size,write}`, `pa_strerror`, `pa_threaded_mainloop_{free,get_api,lock,new,signal,start,stop,unlock,wait}`, `pa_timeval_diff`, `pa_usec_to_bytes`. Также встречается `libpipewire-0.3.so.0`.
 - **WebSocket API** (по документации, формат сверен 31.10.2026, живьём не проверялся): клиент шлёт `{"type":"command","command":"<имя>", …поля рядом}`, **поля корреляции нет**, `command_result` = «принято», а не «выполнено»; события: `auth_state` {logged_in,is_active,device_name}, `playback_state` {status,item,context,position,volume,is_active,options,available_actions}, `position_sync`/`position` {position_ms,timestamp_ms,speed}, `track_changed`, `playback_changed`, `volume_changed`, `device_changed`, `context_changed`, `options_changed`, `queue_changed` {previous[],upcoming[]; запись {uid,source,item}, рассылка ≤ 10}, `error` {message}; трек: `uri`, `entity_type`, `decorations.identity.name`, `decorations.creators[].entity…name`, `decorations.parent.entity`, `decorations.playback.duration_ms`. Запросы `get_auth_state`/`get_state`/`get_queue` возвращают только своё событие.
-- **[проверено] Шим `libpulse.so.0` собран и проверен без Spotify** (`scripts/dev/soloist-o3/shim/`, 31.10.2026, zig 0.17.0, `arm-linux-gnueabihf.2.30`, по заголовкам PulseAudio 17 из Debian): экспортирует **48 из 48** символов Soloist, GLIBC не выше 2.28; на колонке тестовый клиент `shim_test` (тот же вызовный порядок: mainloop → context → stream, `writable_size`/`write`, `cork`, `flush`, `set_sink_input_volume`/`get_sink_input_info`, `get_timing_info`, started/underflow) через загрузчик glibc 2.41 играет тон по цепочке шим → `aplay -D default -r 44100` → общий смеситель, 0 провалов. Достигнуто: `aplay` принимает 44,1 кГц на `default`; пауза замораживает `read_index`; flush перезапускает `aplay` за ≈ 20 мс; громкость идёт через `set_sink_input_volume` (режимы `linear` по умолчанию / `cubic` как PulseAudio / `off`). Со Soloist вживую шим проверен вечером 31.10.2026 (см. «Вход и воспроизведение» ниже); Soloist подгружает аудио-бэкенд только при первом треке (в `LD_DEBUG=libs` при старте `libpulse`/`libpipewire` не запрашиваются). Нерешённое: задержка паузы ≈ 0,3 с (буфер `aplay` + канал), выход мимо движка openmediad (нет приглушения под Алису и единой громкости), объекты контекста и потока не освобождаются.
+- **[проверено] Шим `libpulse.so.0` собран и проверен без Spotify** (`internal/components/spotify-soloist/shim/` (раньше `scripts/dev/soloist-o3/shim/`), 31.10.2026, zig 0.17.0, `arm-linux-gnueabihf.2.30`, по заголовкам PulseAudio 17 из Debian): экспортирует **48 из 48** символов Soloist, GLIBC не выше 2.28; на колонке тестовый клиент `shim_test` (тот же вызовный порядок: mainloop → context → stream, `writable_size`/`write`, `cork`, `flush`, `set_sink_input_volume`/`get_sink_input_info`, `get_timing_info`, started/underflow) через загрузчик glibc 2.41 играет тон по цепочке шим → `aplay -D default -r 44100` → общий смеситель, 0 провалов. Достигнуто: `aplay` принимает 44,1 кГц на `default`; пауза замораживает `read_index`; flush перезапускает `aplay` за ≈ 20 мс; громкость идёт через `set_sink_input_volume` (режимы `linear` по умолчанию / `cubic` как PulseAudio / `off`). Со Soloist вживую шим проверен вечером 31.10.2026 (см. «Вход и воспроизведение» ниже); Soloist подгружает аудио-бэкенд только при первом треке (в `LD_DEBUG=libs` при старте `libpulse`/`libpipewire` не запрашиваются). Нерешённое: задержка паузы ≈ 0,3 с (буфер `aplay` + канал), выход мимо движка openmediad (нет приглушения под Алису и единой громкости), объекты контекста и потока не освобождаются.
 - **[проверено] Зависание Soloist и его причина (вечер 31.10.2026).** После первого `getInfo` любого клиента Spotify (на ПК или телефоне) главный поток Soloist уходил в бесконечный цикл: 100% одного ядра, **ни одного системного вызова** (`strace -p` за 3 с: 0 строк), время почти целиком в ядре (sys), mDNS и HTTP-вход перестают отвечать, колонка пропадает из списка Connect. Выборка адреса через `ptrace` (PC/LR, 12 проб) дала цикл `ldrexb … mcr p15,0,r0,c7,c10,5 … strexb` в самом бинарнике Soloist (смещение `0x14c0a6c`): устаревший барьер памяти CP15 между `ldrex` и `strex`. При `abi.cp15_barrier=1` (по умолчанию, эмуляция) каждый такой барьер ловится ядром, выход из ловушки сбрасывает монитор эксклюзивного доступа, и `strexb` не удаётся никогда. В бинарнике около 43 тыс. таких барьеров (ARM) и ≈ 240 (Thumb). **Лечение: `echo 2 > /proc/sys/abi/cp15_barrier`** (аппаратное исполнение; до перезагрузки, откат `echo 1`); автор выполнил команду сам, после этого зависаний нет. Нужно решение, как это закрепить (init-скрипт или проверка в `doctor`).
 - **[проверено] Вход и воспроизведение (вечер 31.10.2026).** Телефон автора выбрал устройство `omd-o3`: `getInfo` → `addUser` → «Creating session via Connect» → «UCS login result: outcome=success attempts=1 elapsed_ms=352». Аккаунт (новый, Нигерия, Premium, используется из России) **вход прошёл, воспроизведение идёт**; главный риск «отказ ключа для нового аккаунта» (spotiya/#13) на этой попытке не воспроизвёлся. Soloist сначала пишет «Pipewire initialization failed!!», затем берёт `libpulse` (наш шим): `aplay -D default -r 44100 -c 2`, ползунок громкости на телефоне доходит через `set_sink_input_volume` (gain 0,5…1,0, режим `linear`), `underflow` 0, префетч следующего трека идёт (ключ и файл запрашиваются заранее). Цифры во время игры: PSS 43 МБ (в простое 22), 19 потоков, `MemAvailable` ≈ 75 МБ (порог doctor 40 МБ), loadavg ≈ 2,7; после пары треков каталог `-C` ≈ 8 МБ, `data/cache` ≈ 0,3 МБ, на `/data` свободно ≈ 125 МБ.
 - **[проверено] Замер 9 минут с частыми переключениями (вечер 31.10.2026, `cp15_barrier=2`).** Запись WebSocket 542 с: 8 разных треков (радио-контекст), 7 смен трека, 2 паузы с продолжением, 28 событий громкости (62…100%), событий `error` нет, `underflow` 0, сторож не перезапускал Soloist ни разу. Смена трека: `buffering` → `playing` укладывается в ту же секунду (точность трассы 1 с). Память стабильна: `MemAvailable` 68…75 МБ, PSS 36,6…44,5 МБ без роста, потоков 19, load1 2,1…3,8. **Звуковой кэш пишется в каталог `-C` (`/data/soloist-o3/cache`), а не в `data/cache`** (там только индекс ≈ 0,9 МБ). Рост `-C`: 15,4 → 40,9 МБ за 9 минут (≈ +25 МБ; префетч следующего трека запрашивает по 9 МБ: «Requesting data (0 -> 9437184)»), свободное на `/data` 125 → 93 МБ. Вытеснения при 100 МБ ещё не видели.
@@ -391,7 +391,7 @@ client_id = ""           # ключ Soloist и токены только фай�
 
 ### 10.3. О4 частично: запись шины текстовыми запросами, **с Плюсом**
 
-- Метод: `scripts/dev/music-session.sh` (текст через `maind --cli`, пункт `q`) плюс `tcpdump`, 11 фраз, `captures/o4-text.*`. Ограничения: текстовый ввод, а не голос (нет финальной фразы ASR и окна 0,6–1 с), Плюс был включён (без Плюса не проверялось), в сценарии не было умного дома, будильников, таймеров, кнопок, приложения.
+- Метод: `scripts/dev/music-session.sh` (текст через `maind --cli`, пункт `q`) плюс `tcpdump`, 11 фраз, `captures/o4/o4-text.*`. Ограничения: текстовый ввод, а не голос (нет финальной фразы ASR и окна 0,6–1 с), Плюс был включён (без Плюса не проверялось), в сценарии не было умного дома, будильников, таймеров, кнопок, приложения.
 - `pcap` по умолчанию показывает сегмент 9906, а команды `play`/`prefetch` лежат на клиентской стороне шима (19906): они видны в `timeline`, а чтобы вытащить поля, нужен разбор с портом 19906 (`capture.WalkFilePorts`).
 - **[проверено]** Порядок для «включи музыку»: `AliceState` (reply «Включаю.», директивы `tts_play_placeholder audio_play @@mm_stack_engine_get_next`) → `focus 1` → `prefetch` (≈ 3 мс после `focus`, **до** `voice STARTING`) → голос → `play` (≈ 0,95 с после `prefetch`) → `focus 0`. Это подтверждает HISTORY.md:44 (prefetch в начале голоса), а не порядок из BUS-PROTOCOL.md:38; `voice_gate` считать от `prefetch`.
 - **[проверено]** Решение облака видно в `prefetch`/`play`: 1.9.1 название, 1.9.2 исполнитель, **1.9.4.1 контекст**: `user:onyourwave` («Моя волна», 1.9.4.2 = `Radio`), `genre:rock` (`Radio`), и id трека с 1.9.4.2 = `Track` для прямого запроса «включи песню X» (1.9.4.4.1 — предыдущий трек). Поле 52: `prefetchDirective: for prefetch` / `AUDIO_PLAY directive`. Длительность в 1.7 не сверялась, но в событиях `state` она есть.
@@ -412,3 +412,99 @@ client_id = ""           # ключ Soloist и токены только фай�
 7. §4 ось Г: контекст `user:onyourwave` / `genre:*` / `Track` в 1.9.4.1 позволяет отличить «волну» от прямого запроса без LLM-эвристик; лайк виден как reply «Поставила лайк за вас.».
 8. Из отчётов агентов (внешние источники, проверено 31.10.2026 по первоисточникам): Developer Policy шире III.3 — ещё III.5, III.7 (приглушение под Алису и будильник), III.9, III.13, III.14; Web API: лайк только `PUT /me/library`, `GET /me` без `product` и `country`, чужие плейлисты 403 (запасной источник тегов через поиск плейлиста не работает), нужны scope `user-library-modify`, `user-library-read`, `user-read-recently-played`, `user-top-read`, `user-read-playback-state`, `user-modify-playback-state`, redirect только `http://127.0.0.1:порт`.
 9. Этап 1/2: C-шим не вписывается в сборку без CGO (`CGO_ENABLED=0`), нужен кросс-компилятор (`zig cc` — прецедент HISTORY.md:41) или готовые исходники под `tools/build`; LICENSE нужен до первого кода; `music-fake` требует признак dev-only; хук перед `Prefetch` решает синхронно, а поиск в Spotify идёт асинхронно.
+
+### 10.5. Модуль `spotify-soloist` (этап А, 01.11.2026)
+
+Опыт превращён в компонент движка ([internal/components/spotify-soloist](../internal/components/spotify-soloist/README.md)): подключается тегом сборки,
+ставится и настраивается командой `openmediad spotify`, играет через движок (приглушение под Алису, спектр, маршруты `[route]`).
+
+**Решения.**
+
+- Лицензия проекта — MIT (`LICENSE`); Soloist не распространяется (скачивается пользователем с CDN Spotify при `setup`), glibc 2.41 качается из
+  пакета Debian с зафиксированным sha256 (LGPL, файлами рядом, заменяема), шим — свой код.
+- `abi.cp15_barrier = 2` компонент выставляет сам при каждом запуске (`fix_cp15`); согласие пользователя — само включение компонента в сборку:
+  предупреждение (`registry.Info.Notice`) печатает `tools/build`, оно есть в паспорте, `components -v`, шаблоне настроек и README; `doctor` проверяет параметр.
+- Каждый движок Spotify — отдельный компонент с общими кирпичами в `libs/`: `pcmstream` (звук чужого процесса как `engine.Source`), `wsclient`, `debpkg`.
+  В каталоге место занято под `spotify-go-librespot` и `spotify-librespot` (фаза 9); вместо одной записи `spotify`.
+- Шим пишет в unix-сокет движка по протоколу кадров (звук, flush, пауза, громкость) вместо `aplay`; управляющие кадры уходят из потока-писателя, поэтому вызовы
+  Soloist не блокируются. Протокол — в шапке `shim/libpulse_shim.c`. Готовый шим (24 КБ, `zig cc`) лежит в git вместе с хэшем и вшивается в бинарник.
+- Уступка звука Яндексу и обратно: опрос раз в 250 мс; Яндекс на паузу — новый `mediad.Machine.PauseAll`, Spotify на паузу — команда `pause` по WebSocket.
+- Сторож кэша: Soloist сам держит кэш около предела `-z` (за вечер вырос до ≈100 МБ и остановился, на `/data` осталось ≈35 МБ), поэтому компонент при
+  `keep_free_mb` (по умолчанию 25 МБ) удаляет самые старые файлы `*.file`.
+
+**Проверено.** Юнит-тесты (go test ./... на Windows и тесты компонента на самой колонке, `GOOS=linux GOARCH=arm64 go test -c`): разбор кадров и поток движка
+(пауза с возвратом звука, flush, конец трека, битые привет и кадры), надзор (перезапуск, код 10, зависание, SIGTERM→Kill), WebSocket-клиент и разбор событий Soloist,
+сторож кэша, установка (поддельные пакеты, подмена хэша, не-ARM, отказ запуска), ключ, настройки, сквозной тест на поддельном Soloist (процесс-двойник: журнал, WebSocket,
+звук в сокет, уступка Яндексу и обратно). На колонке настоящий шим (`shim_test` через загрузчик glibc 2.41) отдал сокету 65 кадров звука, flush, паузу/продолжение
+и три кадра громкости (`TestLiveShim`), `/proc` разбирается верно.
+
+**Не проверено (нужна колонка и живой Soloist под управлением компонента).** Установка `openmediad spotify setup` на колонке из сети; звук Spotify через движок
+на слух; приглушение под Алису; спектр; наушники; задержка паузы; уступка Яндексу на живой музыке; что удаление файлов кэша не ломает Soloist (по виду это промах кэша);
+переживание перезапуска демона и перезагрузки колонки (`cp15_barrier` сбрасывается и выставляется заново).
+
+**Не сделано.** Голос и подборщик (этапы 1–3 плана), компоненты `spotify-go-librespot` и `spotify-librespot`, автоматическое обновление сборки Soloist до срока.
+
+**Обновление 01.11.2026 (после проверки автором на колонке).** Звук, вход, пауза/«дальше» из приложения, перенос в наушники и уступка Яндексу работают.
+Найдено и сделано:
+
+- *Громкость.* «Алиса, тише» двигала только колонку, ползунок в Spotify оставался. Теперь громкость одна: Master ↔ ползунок Soloist в обе стороны
+  (`volume_sync`, шим громкость не применяет), с защитой от эха и от устаревших данных Soloist.
+- *Переименование.* `openmediad spotify rename ИМЯ` или `config set spotify-soloist.device_name`: у демона появился общий хук `Reload(cfg)` для компонентов,
+  Soloist перезапускается сам за ≈1 с, демон не перезапускается.
+- *Спектр на дисплее не рисуется.* По журналу платформы (`maind.log`): «Spectrum started» для потока Spotify приходит и обновляется каждые 10 с, но
+  `device_state_handler` включает слой `[ spectrogram ]` только по `onSDKState` / `onCapabilityStateChanged`, то есть по состоянию плеера, которое задаёт `mediad`.
+  Для платформы Spotify не плеер, поэтому кадры принимаются, а анимации нет. Лечится только показом Spotify платформе как плеера (виртуальный плеер:
+  события `mediad` с описателем трека, PLAYING/PAUSED; заодно заработают физическая кнопка и «Алиса, пауза»). Описатель плеера сейчас берётся из
+  команды платформы (`in.meta.Event`), собственного не строили, поведение платформы на чужое описание неизвестно: это опыт О5 плана, делать с автором у колонки.
+- Решение автора: остаёмся на Soloist, librespot и go-librespot пока не подключаем. Дальше — перехват фраз и управление голосом (этапы 1–3 плана).
+
+**Обновление 01.11.2026 (громкость и «Spotify как плеер»).**
+
+- *Громкость, исправление.* Первая версия писала Master в обход платформы, и она «помнила» прежний уровень: ползунок на 30%, потом «тише» давало 90%. Теперь ползунок
+  идёт через платформу её собственной командой «громкость N» (текстовый запрос через aliced, `sound_set_level`, без озвучки), а Spotify% = уровень платформы × 5
+  (таблица уровней вынесена в `libs/volmap`). Проверено на колонке: «громкость 5» → `Saved volume 10`, `onVolumeChanged … source: voice`, ответ пустой.
+- *Spotify как плеер платформы: что выяснено.* Платформа знает только те плееры, которые создала сама (`audio_play` из облака → `AudioCommand` к `mediad`); события чужого плеера
+  ей, скорее всего, безразличны, поэтому «виртуальный плеер» одними событиями не сделать. Рабочий путь — «стратегия B» из QUASAR-PROTOCOL.md: **локально попросить платформу
+  начать плеер** (без Плюса, без облака) и подставить в него звук Spotify. Точный механизм найден в публичных описаниях протоколов
+  (`v3rt3p/quasar-protos`, `yandex_io/protos/remoting.proto`, `yandex_io/sdk/directive_sequencer/protos/directive.proto`): клиент `aliced` шлёт
+  `Remoting{remote_object_id=7:"DirectiveSequencer", directive_sequencer_method=23:{method=1:ADD_DIRECTIVES(0), directives=3:[Directive{name=1:"audio_play", request_id=4, json_payload=6:"{…}"}]}}`.
+  Тогда платформа сама создаст плеер, пошлёт шиму `prefetch`/`play`, будет слать `pause`/`release` (физическая кнопка, «Алиса, пауза»), включит слой спектра на дисплее и покажет
+  метаданные. Что осталось выяснить опытом: JSON `audio_play` (stream, metadata, background_mode), как платформа примет адрес-заглушку, как подставить Spotify в `Back.Open`
+  (бэкенд по признаку трека), как вести смену треков и паузу из приложения (новый `audio_play` на каждый трек, события ENDED/PAUSED через автомат).
+  Работа отдельным этапом, с автором у колонки.
+
+**Итог опыта с локальным `audio_play` (01.11.2026): не заработало, код отката.** Директива ставилась через aliced по схеме из quasar-protos
+(`Remoting{7:"DirectiveSequencer", 23:{1:ADD_DIRECTIVES, 3:[Directive{1:"audio_play", 3:"client_action", 4:uuid, 6:json_payload, 11:1}]}}`).
+Платформа **принимает адресата** (в `maind.log` отвечает хост `directive_sequencer_host.cpp`), но на любую форму отвечает
+`[error] directive_sequencer_host.cpp:64 Failed to find DirectiveSequencer method in remoting message`. Перебрано: поле метода 1…70 (тело `ADD_LISTENER`),
+`ADD_DIRECTIVES` с `directives` (3) и с `directive` (2), поле 23 с пустым телом, `DirectiveHandlerMethod` (поле 2); на объект `DirectiveSequencer_`
+платформа молчит. Значит, в этой прошивке хост ждёт метод иначе, чем в публичных protos (они сняты со Станции 2). Директивы по loopback между модулями платформы
+не ходят (в записи 10 с трафика `lo` строки `DirectiveSequencer` нет). Игры с `RoutingAudioPlayer`/`AudioPlayer` не помогут: это плееры звука голоса (PLAY_DATA), не музыки.
+Снятая с колонки форма настоящей директивы (для будущего): `{"name":"audio_play","type":"client_action","sub_name":"music","payload":{"background_mode":"Ducking",
+"metadata":{"title","subtitle","art_image_url","hide_progress_bar","glagol_metadata","switching_streams_metadata"},"stream":{"id","type":"Track","url","alt_urls[3]","decode_key",
+"offset_ms","duration_ms","bitrate","codec":"HeAacMp4","format","normalization":{"integrated_loudness","true_peak"}},"callbacks":{on_started,on_finished,on_failed,…},
+"scenario_meta":{"@scenario_name":"HollywoodMusic",…},"screen_type":"Music","set_pause":false}}`.
+
+**Перехват фраз, срез 1 (01.11.2026): управление идущей сессией Spotify голосом.** Решение автора после опыта выше. Что сделано:
+
+- `observe.Observer.OnPhrase` отдаёт окончательную фразу (`msg.AliceState.FinalPhrase`, ≈1 с до ответа облака) один раз на запрос; демон передаёт её компонентам с методом
+  `InterceptPhrase(reqID, text) bool` (интерфейс `phraseInterceptor`). Первый, кто вернул `true`, забирает фразу.
+- `aliced-client.Client.Cancel` отправляет `CancelDialog` (как `c` в `maind --cli`): облако на выполненную фразу не отвечает.
+- Шлюз голоса `daemon.voiceGate`: если голос Алисы ведёт компонент движка (`VoiceBackend`), ответ облака на перехваченную фразу гасится (окно 5 с, новая неперехваченная фраза
+  его снимает), а автомат получает те же события «запущен, закончен», чтобы диалог завершился штатно. В сборке без такого компонента остаётся одна отмена диалога.
+- Компонент: узкая таблица фраз целиком (`phrases.go`: пауза, продолжи, дальше, назад), правило хозяина звука (`voice.go`: Spotify играет, Яндекс молчит; «продолжи» достаётся
+  тому, кто заиграл последним), команды Soloist по WebSocket без ожидания ответа; при ошибке команды фраза уходит Алисе. Голого «стоп» в таблице нет: им же останавливают
+  звонок будильника (п. 5.2 плана). Текст фразы в журнал не пишется. Настройки `voice` и `voice_cancel` применяются на ходу.
+- Юнит-тесты: таблица (включая 20 «похожих» фраз, которые перехватываться не должны), хозяин звука, настройки, отказ команды, шлюз (прозрачность, одно гашение, срок, снятие),
+  дедупликация фраз наблюдателя, отправка отмены.
+
+Не проверено живым голосом: что отмена диалога успевает до ответа облака и не даёт своего звука; как Алиса реагирует на «паузу», если отмена не сработала (тогда нужен шлюз
+с компонентом голоса); задержка от слов до команды. Проверка — «Алиса, пауза» / «дальше» / «продолжи» при играющем Spotify и `openmediad logs` (строки «фраза перехвачена»).
+
+Что остаётся (по убыванию разумности):
+
+1. *Подмена при голосовом запросе (Б2/Б3 плана, нужен Плюс).* «Алиса, включи Х» → облако само шлёт `audio_play` Яндекса → автомат перехватывает `prefetch`/`play` и играет вместо него Spotify
+   (звук идёт через движок, плеер для платформы настоящий: спектр, кнопка, «пауза»). Это и есть этап «перехват фраз»; без Плюса `audio_play` не приходит.
+2. *Glagol (порт 1961, TLS, нужен токен аккаунта Яндекса)*: команды приложению-клиенту, в том числе `externalCommandBypass`; даёт локальный `audio_play` без облака, но требует хранить токен.
+3. *Разобрать хост по дизассемблеру `maind`* (`directive_sequencer_host.cpp`, `handleDirectiveHandlerMethod`), чтобы узнать, что он ищет: трудоёмко, результат неочевиден.
+4. *Принять, что у сессии из приложения Spotify спектра на дисплее нет* (звук, громкость, пауза, смена трека из приложения, уступка Яндексу работают).

@@ -248,3 +248,29 @@ openmediad». Выключить: `openmediad config set bt-in.enabled false`, `
 - [x] пауза с кнопки наушников — с анимацией;
 - [x] два потока в наушники сразу (музыка и ответ Алисы с `route.voice = ["bt-out", "speaker"]`) — оба в наушниках, через смеситель;
 - [ ] задержка звука в наушниках на глаз (спектр на дисплее идёт с поправкой на динамики).
+
+## 10. Spotify (опытное, компонент `spotify-soloist`)
+
+Колонка появляется в списке устройств приложения Spotify, музыка играет через движок openmediad (приглушение под Алису, спектр, маршруты).
+Нужен аккаунт Spotify с Premium (для выпуска ключа Soloist). Подробно, с предупреждениями и разбором неполадок —
+[internal/components/spotify-soloist/README.md](../internal/components/spotify-soloist/README.md).
+
+**Внимание.** Компонент при каждом запуске меняет настройку ядра колонки `abi.cp15_barrier` с 1 на 2 (до перезагрузки; без этого Soloist
+зависает), а сам Soloist — закрытая программа Spotify, условия которой принимает пользователь. Включая компонент в сборку, вы с этим
+соглашаетесь (`go run ./tools/build` печатает предупреждение).
+
+```sh
+go run ./tools/build -with spotify-soloist -deploy 192.168.1.12        # на компьютере
+```
+
+На колонке (root):
+
+```sh
+openmediad spotify setup                 # скачать Soloist и glibc, записать шим (≈40 МБ на /data)
+openmediad spotify setkey < key.txt      # ключ из https://developer.spotify.com/dashboard/soloist
+openmediad restart
+openmediad spotify status                # установлено ли всё, срок сборки, состояние в демоне
+```
+
+В приложении Spotify (телефон в той же Wi-Fi, VPN выключен) выберите устройство. Сборка Soloist живёт 90 дней: `openmediad spotify update`.
+Удалить: `openmediad spotify uninstall -yes`.

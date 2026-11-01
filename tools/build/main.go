@@ -231,6 +231,11 @@ func build(o opts) (string, error) {
 	for _, n := range notes {
 		fmt.Println("внимание:", n)
 	}
+	for _, n := range names {
+		if c, _ := catalog.Lookup(n); c.Notice != "" {
+			fmt.Printf("ВНИМАНИЕ (%s): %s\nВключая компонент в сборку, вы с этим соглашаетесь.\n", c.Name, c.Notice)
+		}
+	}
 	goos, goarch := "linux", "arm64"
 	if o.host {
 		goos, goarch = runtime.GOOS, runtime.GOARCH

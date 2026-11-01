@@ -81,6 +81,10 @@ func (c *Client) Ask(ctx context.Context, text string) error {
 	return c.send(ctx, wire.TextInput(newID(), newID(), text))
 }
 
+// Cancel отменяет текущий диалог Алисы (как 'c' в maind --cli): облако на фразу не ответит, Алиса вернётся в покой. В кадре нет
+// номера запроса, поэтому отменяется тот диалог, что идёт сейчас: звать нужно сразу после того, как узнали фразу.
+func (c *Client) Cancel(ctx context.Context) error { return c.send(ctx, wire.CancelDialog()) }
+
 func (c *Client) send(ctx context.Context, frame []byte) error {
 	addr := c.Addr
 	if addr == "" {

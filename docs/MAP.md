@@ -75,7 +75,8 @@ openmediad/
 │   │   ├── debug-page/          Отладочная веб-страница
 │   │   ├── debug-profiler/      Профилировщик pprof (требует debug-page)
 │   │   ├── bt-out/              Bluetooth-наушники: вывод звука
-│   │   └── bt-in/               Bluetooth: звук с телефона через движок
+│   │   ├── bt-in/               Bluetooth: звук с телефона через движок
+│   │   └── spotify-soloist/     Spotify Connect через Soloist (+ shim/ на C, assets/ с готовым шимом)
 │   │
 │   ├── libs/                    ══ ОБЩЕЕ ДЛЯ КОМПОНЕНТОВ: не ядро, но нужно нескольким компонентам ══
 │   │   ├── gstreamer/           запуск встроенного GStreamer колонки         → yandex-music, system-sounds
@@ -83,7 +84,11 @@ openmediad/
 │   │   ├── bluez/               BlueZ и BlueALSA: устройства, спаривание     → bt-out, bt-in, bt-command
 │   │   ├── bt-command/          команда терминала `openmediad bt`            → приходит с bt-out или bt-in
 │   │   ├── alsactl/             регулятор громкости ALSA и статус PCM        → bt-out, devtools
-│   │   └── aliced-client/       клиент aliced: пауза / «дальше» / запрос Алисе → bt-out
+│   │   ├── aliced-client/       клиент aliced: пауза / «дальше» / запрос Алисе → bt-out
+│   │   ├── pcmstream/           звук от чужого процесса как источник движка  → spotify-soloist (и будущие движки Spotify)
+│   │   ├── wsclient/            клиент WebSocket (RFC 6455)                  → spotify-soloist
+│   │   ├── debpkg/              файлы из пакета .deb (ar + xz/gz)            → spotify-soloist
+│   │   └── volmap/              таблица громкости платформы (уровень ↔ Master) → bt-out, spotify-soloist
 │   │
 │   ├── devtools/                ══ ИНСТРУМЕНТЫ РАЗРАБОТЧИКА: код для openmediad-dev и тестов ══
 │   │   └── capture/             чтение записей трафика (pcap, .omdf)
@@ -121,6 +126,7 @@ openmediad/
 | команда терминала | компонент или библиотека зовёт `command.Register(группа, команда)` из `init()` — так появляется `openmediad bt` |
 | строка в `status` | компонент реализует `StatusLine() string` |
 | директивы Алисы | компонент реализует `OnDirective(name string)`: демон отдаёт ему имена всех директив, смысл знает компонент |
+| фразы пользователя | компонент реализует `InterceptPhrase(reqID, text) bool`: демон отдаёт окончательную фразу раньше ответа облака; `true` — фраза выполнена компонентом, ответ облака голосом гасится |
 | пробный выход | `command.RegisterTestOutput(имя, ...)` — `openmediad test-sound ИМЯ` |
 | состояние для отладки | `DebugState() any` — показывается в `status -v` и на отладочной странице по имени компонента |
 
@@ -141,6 +147,7 @@ openmediad/
 | `debug-profiler` | Профилировщик | вспомогательный | нет | компонент `debug-page` | `omd_debug_profiler` |
 | `bt-out` | Bluetooth-наушники (вывод) | необязательный, опытный | нет | BlueZ, `aplay`, `/dev/input`, `aliced` | `omd_bt_out` |
 | `bt-in` | Bluetooth: звук с телефона | необязательный, опытный | нет | BlueZ, `arecord`, `bluealsa-aplay` | `omd_bt_in` |
+| `spotify-soloist` | Spotify (Soloist) | необязательный, опытный | нет | `aplay`, сеть, `abi.cp15_barrier = 2` (ставит сам), ключ Soloist | `omd_spotify_soloist` |
 
 Классы: **необходимый** — то, ради чего проект существует; **штатный** — повторяет штатное поведение колонки; **вспомогательный** — для людей,
 не для звука; **необязательный** — новая возможность сверх штатной колонки. Любой компонент можно не включать в сборку — что он делал, играет

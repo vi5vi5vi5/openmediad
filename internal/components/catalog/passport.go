@@ -85,6 +85,9 @@ func PassportBlock(c registry.Info) string {
 	if c.WithoutIt != "" {
 		row("Если убрать", c.WithoutIt)
 	}
+	if c.Notice != "" {
+		row("**Внимание**", c.Notice)
+	}
 	b.WriteString(PassportEnd + "\n")
 	return b.String()
 }

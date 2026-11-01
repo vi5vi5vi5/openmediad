@@ -98,11 +98,11 @@ func TestErrorsHaveLineNumbers(t *testing.T) {
 }
 
 func TestUncompiledComponentAndSinkAreWarnings(t *testing.T) {
-	c, err := Load("[spotify]\nenabled = true\n[route]\nmusic = [\"bt-out\", \"speaker\"]\n")
+	c, err := Load("[net-out]\nenabled = true\n[route]\nmusic = [\"bt-out\", \"speaker\"]\n")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(c.Warnings) != 2 || !strings.Contains(c.Warnings[0], "spotify") || !strings.Contains(c.Warnings[1], "bt-out") {
+	if len(c.Warnings) != 2 || !strings.Contains(c.Warnings[0], "net-out") || !strings.Contains(c.Warnings[1], "bt-out") {
 		t.Fatalf("замечания: %v", c.Warnings)
 	}
 	if len(c.Route.Music) != 1 || c.Route.Music[0] != "speaker" {

@@ -94,11 +94,27 @@ var All = []registry.Info{
 		},
 		WithoutIt: "звук телефона играет штатный bluealsa-aplay",
 	},
+	{
+		Name: "spotify-soloist", Title: "Spotify (Soloist)", Section: "spotify-soloist", Kind: registry.Source, Class: registry.Optional,
+		Summary:      "колонка как устройство Spotify Connect: официальный движок Soloist играет через движок openmediad (приглушение под Алису, спектр, маршруты), голосом: пауза, продолжи, дальше, назад; команда `spotify`",
+		Experimental: true, Ready: true,
+		Needs: []registry.Need{
+			need(registry.NeedAplay, "системный `aplay`: вывод звука"),
+			need(registry.NeedNetwork, "сеть: серверы Spotify, CDN Soloist и зеркало пакетов Debian (только при установке)"),
+			need(registry.NeedCP15Barrier, "`abi.cp15_barrier = 2` (аппаратные барьеры памяти): компонент выставляет сам при запуске; без этого Soloist зависает"),
+			need("soloist-key", "ключ Soloist из Developer Dashboard Spotify (нужен Premium) и установка `openmediad spotify setup`"),
+		},
+		WithoutIt: "Spotify на колонке не играет (Bluetooth с телефона работает, если собран `bt-in`)",
+		Notice: "при каждом запуске компонент меняет настройку ядра колонки `abi.cp15_barrier` с 1 на 2 (ключ `fix_cp15`; до перезагрузки, остальным программам не мешает); " +
+			"Soloist — закрытая программа Spotify: она скачивается самим пользователем при установке и не распространяется с проектом; " +
+			"условия Spotify (Developer Policy, в частности запрет голосового управления Spotify) принимает пользователь",
+	},
 
 	// запланированные (в сборку не входят)
 	{Name: "net-out", Title: "Звук в сеть", Section: "net-out", Kind: registry.Sink, Class: registry.Optional, Summary: "звук в сеть для других программ", Phase: 7},
 	{Name: "internet-radio", Title: "Интернет-радио", Section: "internet-radio", Kind: registry.Source, Class: registry.Optional, Summary: "интернет-радио и HTTP-потоки", Phase: 8},
-	{Name: "spotify", Title: "Spotify", Section: "spotify", Kind: registry.Source, Class: registry.Optional, Summary: "Spotify (librespot)", Phase: 9},
+	{Name: "spotify-go-librespot", Title: "Spotify (go-librespot)", Section: "spotify-go-librespot", Kind: registry.Source, Class: registry.Optional, Summary: "Spotify Connect через go-librespot (отдельный процесс); для аккаунтов, которым Spotify выдаёт аудиоключ", Phase: 9},
+	{Name: "spotify-librespot", Title: "Spotify (librespot)", Section: "spotify-librespot", Kind: registry.Source, Class: registry.Optional, Summary: "Spotify Connect через librespot (отдельный процесс); для аккаунтов, которым Spotify выдаёт аудиоключ", Phase: 9},
 	{Name: "soundcloud", Title: "SoundCloud", Section: "soundcloud", Kind: registry.Source, Class: registry.Optional, Summary: "SoundCloud", Phase: 10},
 	{Name: "net-in", Title: "Приём звука по сети", Section: "net-in", Kind: registry.Source, Class: registry.Optional, Summary: "приём звука по сети", Phase: 11},
 }
