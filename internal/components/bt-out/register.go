@@ -8,6 +8,7 @@ import (
 
 	"openmediad/internal/core/cli/command"
 	"openmediad/internal/core/config"
+	"openmediad/internal/core/control"
 	"openmediad/internal/core/platform/proc"
 	"openmediad/internal/core/quasar/mediad"
 	"openmediad/internal/core/registry"
@@ -76,23 +77,9 @@ func init() {
 			}
 			ctl := &alicedclient.Client{}
 			mach, _ := registry.Use[*mediad.Machine](env, "machine")
-			buttons := func(b Button) {
-				var err error
-				switch {
-				case (b == ButtonPlayPause || b == ButtonStop) && mach != nil && mach.Playing():
-					// пауза — как голосом: локальная команда ставит паузу без анимации на экране, а директива облака — с ней
-					err = ctl.Ask(context.Background(), "поставь на паузу")
-				default:
-					cmd := map[Button]alicedclient.Command{ButtonPlayPause: alicedclient.Toggle, ButtonStop: alicedclient.Pause,
-						ButtonNext: alicedclient.Next, ButtonPrev: alicedclient.Prev}[b]
-					err = ctl.Send(context.Background(), cmd)
-				}
-				if err != nil {
-					logf("кнопка наушников «%s»: платформе не передана: %v", b, err)
-					return
-				}
-				logf("кнопка наушников «%s» → платформе", b)
-			}
+			hub, _ := registry.Use[*control.Hub](env, "control")
+			// кнопку получает сначала плеер движка (Spotify), и только если команда не его, она уходит платформе (route.go)
+			buttons := newButtonRoute(hub, func() bool { return mach != nil && mach.Playing() }, logf).press
 			return &Sink{
 				Device:      strings.ToUpper(c.Device),
 				Aplay:       c.Aplay,

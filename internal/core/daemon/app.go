@@ -17,6 +17,7 @@ import (
 
 	"openmediad/internal/core/buildinfo"
 	"openmediad/internal/core/config"
+	"openmediad/internal/core/control"
 	"openmediad/internal/core/ctlsock"
 	"openmediad/internal/core/engine"
 	"openmediad/internal/core/journal"
@@ -65,8 +66,9 @@ type daemon struct {
 	comps   []*component
 	closers []func()
 	dup     dedup
-	gate    *voiceGate // шлюз голоса Алисы (nil, пока голос играет не движок)
-	led     *led.Panel // панель индикации: модули сообщают, кто играет и куда идёт звук (подсветку рисует компонент led-ring)
+	gate    *voiceGate   // шлюз голоса Алисы (nil, пока голос играет не движок)
+	led     *led.Panel   // панель индикации: модули сообщают, кто играет и куда идёт звук (подсветку рисует компонент led-ring)
+	hub     *control.Hub // единая дверь команд плееру: источники (кнопки, наушники) говорят «пауза», плеер движка (Spotify) выполняет
 
 	platformLog string // лог платформы, по которому видны кнопка и жесты (в тестах подменяется)
 }
@@ -159,6 +161,7 @@ func (d *daemon) setupJournal() {
 func (d *daemon) setupEngine() {
 	sp := &speaker.Sink{Aplay: d.cfg.Speaker.Aplay, Device: d.cfg.Speaker.Device}
 	d.led = led.NewPanel()
+	d.hub = &control.Hub{OnHandled: d.controlHandled}
 	d.rt = newRouter(d.cfg.Route, sp)
 	d.rt.ind = d.led
 	d.eng = &engine.Engine{Router: d.rt, Logf: d.j.Logf("engine")}

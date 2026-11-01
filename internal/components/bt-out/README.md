@@ -29,7 +29,7 @@
 | `status.go` | `State`, `StatusLine` (строка в `status`), `DebugState` |
 | `mixer.go` | смеситель: один постоянный `aplay` в PCM BlueALSA; потоки складываются порциями по 20 мс, в паузах — тишина |
 | `volume.go`, `hold.go` | шкала громкости платформы и пересчёт; удержание громкости динамиков, пока подключены наушники |
-| `buttons.go` | кнопки наушников (AVRCP): чтение `/dev/input/eventN`, нажатия уходят платформе |
+| `buttons.go` | кнопки наушников (AVRCP): чтение `/dev/input/eventN`, сначала плееру движка (Spotify) через ядро, если команда не его — платформе (`route.go`) |
 | `testoutput.go` | пробный выход для `openmediad test-sound bt-out` |
 | `register.go` | регистрация, настройки `[bt-out]`, подключение команды `bt` |
 

@@ -9,7 +9,7 @@
 * `Watcher` читает лог с конца (прошлые нажатия не повторяются), каждые 50 мс, переживает ротацию `maind.log`, ждёт конца недописанной строки
   и вызывает `OnAction`.
 
-Демон запускает его, только если есть компонент с `OnButton(buttons.Action) bool` (сейчас `spotify-soloist`); первый, кто выполнил
+Демон запускает его, только если в сборке есть плеер движка (`control.Player`, сейчас `spotify-soloist`) и переводит действие в команду для [core/control](../control/README.md); первый, кто выполнил
 действие, останавливает обход (`core/daemon/buttons.go`).
 
 Тесты: `go test ./internal/core/quasar/buttons/`.

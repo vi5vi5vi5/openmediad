@@ -2,41 +2,34 @@ package daemon
 
 import (
 	"context"
+	"fmt"
 
+	"openmediad/internal/core/control"
 	"openmediad/internal/core/journal"
 	"openmediad/internal/core/quasar/buttons"
 )
 
-// watchButtons следит за кнопкой Алисы и жестами по колонке и сообщает компонентам (buttonHandler), что это было. Лог платформы читается
-// только если такой компонент есть.
+// watchButtons следит за кнопкой Алисы и жестами по колонке и отдаёт их в Hub как команды плееру. Лог платформы читается только если в сборке
+// есть плеер движка, которому они могут пригодиться.
 func (d *daemon) watchButtons(ctx context.Context) {
-	if len(d.buttonHandlers()) == 0 {
+	if d.hub.Len() == 0 {
 		return
 	}
 	w := &buttons.Watcher{Path: d.platformLog, OnAction: d.button}
 	go w.Run(ctx)
 }
 
-func (d *daemon) buttonHandlers() []buttonHandler {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	var hs []buttonHandler
-	for _, c := range d.comps {
-		if h, ok := c.obj.(buttonHandler); ok && c.err == nil {
-			hs = append(hs, h)
-		}
+// button переводит действие кнопок колонки в команду плееру. Не взял никто — играет Яндекс.Музыка или ничего: платформа справится сама.
+func (d *daemon) button(a buttons.Action) {
+	cmd := map[buttons.Action]control.Cmd{buttons.Toggle: control.Toggle, buttons.Next: control.Next, buttons.Prev: control.Prev}[a]
+	if cmd == "" {
+		return
 	}
-	return hs
+	d.hub.Do(cmd, control.Speaker)
 }
 
-// button отдаёт действие кнопок компонентам по очереди; тот, кто его выполнил, останавливает обход: два компонента не должны
-// ответить на одно нажатие.
-func (d *daemon) button(a buttons.Action) {
-	for _, h := range d.buttonHandlers() {
-		if h.OnButton(a) {
-			d.j.Log(journal.Info, "buttons", "колонка: "+a.String()+" — выполнено компонентом",
-				"Платформа записала нажатие или жест в свой лог; компонент выполнил его в своём плеере (платформа к нему не имеет отношения).", nil)
-			return
-		}
-	}
+// controlHandled пишет в журнал, что плеер движка выполнил команду.
+func (d *daemon) controlHandled(c control.Cmd, from control.Origin, player string) {
+	d.j.Log(journal.Info, "control", fmt.Sprintf("%s (%s): выполнено плеером %s", c, from, player),
+		"Команду плееру отдал источник (кнопки колонки, кнопки наушников); музыку играет движок, а платформа про этот плеер не знает, поэтому выполнил его компонент.", nil)
 }

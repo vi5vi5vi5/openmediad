@@ -5,10 +5,10 @@ import (
 	"fmt"
 
 	"openmediad/internal/core/config"
+	"openmediad/internal/core/control"
 	"openmediad/internal/core/ctlsock"
 	"openmediad/internal/core/engine"
 	"openmediad/internal/core/journal"
-	"openmediad/internal/core/quasar/buttons"
 	"openmediad/internal/core/quasar/mediad"
 	"openmediad/internal/core/registry"
 )
@@ -60,11 +60,6 @@ type (
 	phraseInterceptor interface {
 		InterceptPhrase(reqID, text string, fast bool) (handled bool)
 	}
-	// buttonHandler — компонент играет музыку сам, а платформа про неё не знает: нажатие кнопки Алисы и проведение по колонке
-	// она адресует своему плееру. true — действие выполнено здесь.
-	buttonHandler interface {
-		OnButton(a buttons.Action) (handled bool)
-	}
 )
 
 // startComponents создаёт включённые компоненты сборки и подключает их: бэкенды — к автомату mediad, модули — запускает.
@@ -79,6 +74,7 @@ func (d *daemon) startComponents(ctx context.Context) {
 			"journal": d.j,
 			"state":   d.debugState,
 			"led":     d.led,
+			"control": d.hub, // *control.Hub: источники команд (кнопки, наушники) отдают их плееру движка
 			// погасить ближайший ответ Алисы голосом (если голос ведёт компонент движка): для компонентов, выполнивших фразу не сразу
 			"swallow-voice": func() {
 				d.mu.Lock()
@@ -156,6 +152,9 @@ func (d *daemon) attach(c *component) {
 			name := s.Name()
 			n.OnArrival(func() { d.eng.Reroute(func(c engine.Class) bool { return d.rt.better(c, name) }) })
 		}
+	}
+	if p, ok := c.obj.(control.Player); ok { // плеер движка (Spotify): ему отдают команды кнопок и наушников
+		d.hub.Add(c.name, p)
 	}
 	if s, ok := c.obj.(shutdowner); ok {
 		d.closers = append(d.closers, s.Shutdown)
