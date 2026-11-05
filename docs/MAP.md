@@ -88,6 +88,7 @@ openmediad/
 │   │   ├── aliced-client/       клиент aliced: пауза / «дальше» / запрос Алисе → bt-out
 │   │   ├── pcmstream/           звук от чужого процесса как источник движка  → spotify-soloist (и будущие движки Spotify)
 │   │   ├── ringled/             кольцо подсветки логотипа (/dev/fb0) и хранитель кадра → led-ring
+│   │   ├── clockled/            дисплей с часами (sysfs), анимации прошивки .binscled.zst, проигрыватель → led-ring
 │   │   ├── resample/            передискретизация PCM (44,1 → 48 кГц)         → spotify-soloist
 │   │   ├── wsclient/            клиент WebSocket (RFC 6455)                  → spotify-soloist
 │   │   ├── debpkg/              файлы из пакета .deb (ar + xz/gz)            → spotify-soloist
@@ -102,7 +103,7 @@ openmediad/
 │   └── celtcheck/               отдельный модуль: сверка декодера Opus
 ├── scripts/dev/                 скрипты для живой колонки и симулятор колонки
 ├── testdata/                    обезличенные записи трафика для золотых тестов
-└── docs/                        MAP.md (эта карта), COMPONENTS.md, ARCHITECTURE.md, INSTALL.md, BUS-PROTOCOL.md, research/
+└── docs/                        MAP.md (эта карта), COMPONENTS.md, ARCHITECTURE.md, PLAYERS.md (как написать плеер), INSTALL.md, BUS-PROTOCOL.md, research/
 ```
 
 ---

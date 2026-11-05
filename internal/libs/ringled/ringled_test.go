@@ -201,6 +201,27 @@ func TestRunReleasesOnCancel(t *testing.T) {
 	}
 }
 
+// Анимация показывает и чёрные кадры, не отдавая кольцо: Show держит его, а Set с нулевым кадром отдал бы.
+func TestShowKeepsTheRingOnBlackFrames(t *testing.T) {
+	r := newRig()
+	r.k.Show(frame(3, yellow))
+	r.k.Show(Frame{})
+	if !r.k.Status().Owned {
+		t.Fatal("чёрный кадр анимации отдал кольцо")
+	}
+	if r.dev.cur != (Frame{}) {
+		t.Fatalf("чёрный кадр не нарисован: %+v", r.dev.cur)
+	}
+	r.k.Show(frame(0, blue))
+	if r.dev.cur != frame(0, blue) {
+		t.Fatalf("следующий кадр не нарисован: %+v", r.dev.cur)
+	}
+	r.k.Release()
+	if r.k.Status().Owned {
+		t.Fatal("кольцо не отдано в конце")
+	}
+}
+
 // Потерянная запись «погасить» не оставляет на кольце тусклый кадр навсегда: через 150 мс после отдачи его гасят снова.
 func TestReleaseVerifiesTheRingWentDark(t *testing.T) {
 	r := newRig()
@@ -423,5 +444,29 @@ func TestQuickReclaimNeverInterruptsAnAnimation(t *testing.T) {
 	}
 	if r.dev.nwrites() != writes {
 		t.Fatal("писали посреди анимации прошивки")
+	}
+}
+
+// Вторая пара скобок в строке лога — анимация дисплея с часами: свободен он только когда показывает время.
+func TestAnimClockPartOfTheLog(t *testing.T) {
+	for line, want := range map[string]struct {
+		clock []string
+		idle  bool
+	}{
+		`Play animations: [ idle.led ] [ <Animation> ] source=onSDKState`:                                                {[]string{"<Animation>"}, true},
+		`Play animations: [ idle.led ] [ spectrogram ] source=onSpectrumChanged`:                                         {[]string{"spectrogram"}, false},
+		`Play animations: [ /x/oknix//alice_thinking.led ] [ thinkingWithDelay ] source=onSDKState`:                      {[]string{"thinkingWithDelay"}, false},
+		`Play animations: [ /x/oknix//alice_listening.led ] [ /x/clock/alice_listening.binscled.zst ] source=onSDKState`: {[]string{"alice_listening.binscled.zst"}, false},
+	} {
+		a, ok := parseLine([]byte(line))
+		if !ok {
+			t.Fatalf("%q не разобрана", line)
+		}
+		if len(a.Clock) != len(want.clock) || a.Clock[0] != want.clock[0] || a.ClockIdle() != want.idle {
+			t.Errorf("%q → дисплей %v свободен=%v, ждали %v %v", line, a.Clock, a.ClockIdle(), want.clock, want.idle)
+		}
+	}
+	if !(Anim{}).ClockIdle() {
+		t.Error("прошивка ничего не сообщала — дисплей считается свободным")
 	}
 }

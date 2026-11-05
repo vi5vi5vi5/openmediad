@@ -368,7 +368,8 @@ func syncAllDocs() error {
 }
 
 // deployTo заливает бинарник на колонку. scp и sftp на колонке нет, поэтому файл идёт через stdin ssh; сначала во
-// временное имя, потом переименование, чтобы обрыв связи не оставил битый файл.
+// временное имя (у каждой заливки своё, чтобы две одновременные не мешали друг другу), потом проверка контрольной суммы и
+// переименование: обрыв связи не оставит битый файл. Связь с колонкой по Wi-Fi иногда рвётся посреди передачи, поэтому до трёх попыток.
 func deployTo(bin, target string) error {
 	host, port := target, "2222"
 	if i := strings.LastIndexByte(target, ':'); i > 0 {
@@ -376,20 +377,29 @@ func deployTo(bin, target string) error {
 	}
 	name := filepath.Base(bin)
 	dst := "/tmp/openmediad/" + strings.TrimSuffix(name, ".exe") // рабочий каталог демона в ОЗУ: исчезнет при перезагрузке
-	f, err := os.Open(bin)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-	remote := fmt.Sprintf("mkdir -p /tmp/openmediad && cat > %[1]s.new && chmod +x %[1]s.new && mv %[1]s.new %[1]s && sha256sum %[1]s", dst)
-	cmd := exec.Command("ssh", "-p", port, "root@"+host, remote)
-	cmd.Stdin, cmd.Stdout, cmd.Stderr = f, os.Stdout, os.Stderr
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("ssh: %w", err)
-	}
 	sum, err := fileSHA256(bin)
 	if err != nil {
 		return err
+	}
+	remote := fmt.Sprintf(`mkdir -p /tmp/openmediad && T=%[1]s.new.$$ && { cat > $T && chmod +x $T && [ "$(sha256sum $T | cut -d' ' -f1)" = %[2]s ] && mv $T %[1]s && echo "%[2]s  %[1]s"; } || { rm -f $T; echo "заливка не удалась: файл не дошёл целиком или сумма не совпала" >&2; exit 3; }`, dst, sum)
+	const attempts = 3
+	for i := 1; ; i++ {
+		f, err := os.Open(bin)
+		if err != nil {
+			return err
+		}
+		cmd := exec.Command("ssh", "-p", port, "-o", "ConnectTimeout=10", "-o", "ServerAliveInterval=5", "-o", "ServerAliveCountMax=3", "root@"+host, remote)
+		cmd.Stdin, cmd.Stdout, cmd.Stderr = f, os.Stdout, os.Stderr
+		err = cmd.Run()
+		f.Close()
+		if err == nil {
+			break
+		}
+		if i == attempts {
+			return fmt.Errorf("ssh: %w (попыток: %d)", err, attempts)
+		}
+		fmt.Fprintf(os.Stderr, "заливка: попытка %d из %d не удалась (%v), повторяю\n", i, attempts, err)
+		time.Sleep(2 * time.Second)
 	}
 	fmt.Printf("%s  (локальный файл)\nзалито в %s:%s. На колонке: %s start (до перезагрузки) или %s install\n", sum, host, dst, dst, dst)
 	return nil

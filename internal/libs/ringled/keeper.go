@@ -32,6 +32,36 @@ type Keeper struct {
 
 	verifyAt    time.Time // когда проверить, что после отдачи кольцо действительно погасло
 	verifyTries int
+
+	trace  [traceLen]TraceEntry // последние события хранителя: что рисовали и когда прошивка забирала кольцо
+	traceN int
+}
+
+// traceLen — сколько последних событий хранитель помнит (для разбора «почему не загорелось»).
+const traceLen = 96
+
+// TraceEntry — одно событие хранителя кольца.
+type TraceEntry struct {
+	At    time.Time
+	What  string // take, write, yield, release, reclaim-clear
+	Frame Frame  // что записали или что увидели на кольце
+}
+
+func (k *Keeper) note(what string, f Frame) {
+	k.trace[k.traceN%traceLen] = TraceEntry{At: k.now(), What: what, Frame: f}
+	k.traceN++
+}
+
+// Trace — последние события хранителя, старые первыми.
+func (k *Keeper) Trace() []TraceEntry {
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	n := min(k.traceN, traceLen)
+	out := make([]TraceEntry, 0, n)
+	for i := k.traceN - n; i < k.traceN; i++ {
+		out = append(out, k.trace[i%traceLen])
+	}
+	return out
 }
 
 // clearCheck — через сколько после отдачи кольца проверить, что наш кадр с него ушёл, и сколько раз гасить повторно.
@@ -85,11 +115,17 @@ func (k *Keeper) anim() Anim {
 	return k.Anim()
 }
 
-// Set задаёт нужный кадр. Кадр, совпадающий с уже заданным, ничего не делает.
-func (k *Keeper) Set(f Frame) {
+// Set задаёт нужный кадр. Кадр, совпадающий с уже заданным, ничего не делает. Нулевой кадр отдаёт кольцо прошивке.
+func (k *Keeper) Set(f Frame) { k.set(f, f.IsZero()) }
+
+// Show задаёт кадр, не отдавая кольцо, даже если он чёрный: черны бывают кадры внутри анимации, и отдавать кольцо на каждом такой кадре
+// значило бы отдавать и забирать его десятки раз в секунду. В конце анимации кольцо отдают Release или Set с нулевым кадром.
+func (k *Keeper) Show(f Frame) { k.set(f, false) }
+
+func (k *Keeper) set(f Frame, release bool) {
 	k.mu.Lock()
 	defer k.mu.Unlock()
-	if f.IsZero() {
+	if release {
 		k.release()
 		return
 	}
@@ -99,6 +135,7 @@ func (k *Keeper) Set(f Frame) {
 	k.want = f
 	if !k.owned {
 		k.owned = true
+		k.note("take", f)
 		k.logf("кольцо: берём под управление")
 		select {
 		case k.wakeLocked() <- struct{}{}:
@@ -128,6 +165,7 @@ func (k *Keeper) release() {
 		}
 		k.actual, k.active = Frame{}, false
 	}
+	k.note("release", Frame{})
 	k.logf("кольцо: отдаём прошивке")
 	// Погасло ли на самом деле, проверим чуть позже: потерянная запись оставила бы на кольце последний тусклый кадр.
 	k.verifyAt, k.verifyTries = k.now().Add(clearCheck), 0
@@ -183,6 +221,7 @@ func (k *Keeper) Tick(now time.Time) {
 	}
 	if k.active && actual != k.written {
 		k.active = false // прошивка нарисовала поверх нас — пусть доиграет
+		k.note("yield", actual)
 		k.yields++
 	}
 	if !k.active {
@@ -212,6 +251,7 @@ func (k *Keeper) apply(now time.Time) {
 		return
 	}
 	k.written, k.actual, k.active = k.want, k.want, true
+	k.note("write", k.want)
 }
 
 // Run сверяет кольцо, пока не отменят ctx; на выходе отдаёт кольцо прошивке.
@@ -231,14 +271,15 @@ func (k *Keeper) Run(ctx context.Context) {
 
 // Status — состояние для статуса.
 type Status struct {
-	Owned  bool
-	Active bool // наш кадр горит; false при owned — уступили прошивке
-	Want   Frame
-	Yields int
+	Owned   bool
+	Active  bool // наш кадр горит; false при owned — уступили прошивке
+	Want    Frame
+	Written Frame // что мы записали на кольцо последним
+	Yields  int
 }
 
 func (k *Keeper) Status() Status {
 	k.mu.Lock()
 	defer k.mu.Unlock()
-	return Status{Owned: k.owned, Active: k.active, Want: k.want, Yields: k.yields}
+	return Status{Owned: k.owned, Active: k.active, Want: k.want, Written: k.written, Yields: k.yields}
 }

@@ -305,3 +305,70 @@ func TestTakeOverAlsoTakesPausedYandexSession(t *testing.T) {
 		t.Fatal("второй вызов что-то сломал")
 	}
 }
+
+// Пока сессию платформы держит Spotify, следующий трек очереди Яндекса не качается и не декодируется: предзагрузка принимается без открытия.
+// Раньше такие треки открывались по-настоящему (скачивание и отдельный процесс-декодер в памяти) и не освобождались: платформа до них не доходила.
+func TestPrefetchWhileSpotifyHoldsThePlatformSessionIsNotOpened(t *testing.T) {
+	r := newRig(t)
+	r.m.SetVirtual(vtrack(true))
+	r.m.ArmCarrier(3 * time.Second)
+	r.m.Handle(nil, playCmd(yandexPlayer, yandexTrack, 0)) // плеер платформы занят под Spotify
+	r.advance(30 * time.Second)                            // окно ArmCarrier давно закрылось
+	if !r.m.Handle(nil, prefetchCmd(otherPlayer, "5")) {
+		t.Fatal("предзагрузка не принята автоматом")
+	}
+	if r.be.has("open "+otherPlayer+" 5") || len(r.fwd) != 0 {
+		t.Fatalf("трек очереди Яндекса открыт, хотя играть его некому: %v, mediad получил %d", r.be.calls, len(r.fwd))
+	}
+	for _, pi := range r.m.Snapshot() {
+		if pi.Track == "5" {
+			t.Fatalf("в автомате остался плеер, которого нет: %+v", pi)
+		}
+	}
+}
+
+// Настоящая музыка Яндекса снова открывает предзагрузку как обычно.
+func TestPrefetchOpensAgainWhenRealYandexMusicPlays(t *testing.T) {
+	r := newRig(t)
+	r.m.SetVirtual(vtrack(true))
+	r.m.ArmCarrier(3 * time.Second)
+	r.m.Handle(nil, playCmd(yandexPlayer, yandexTrack, 0))
+	r.advance(30 * time.Second)
+	r.m.Handle(nil, playCmd(otherPlayer, "5", 0)) // пользователь включил Яндекс: сессия платформы уже не Spotify
+	r.m.Handle(nil, prefetchCmd("22222222-3333-4444-8555-666677778888", "6"))
+	if !r.be.has("open 22222222-3333-4444-8555-666677778888 6") {
+		t.Fatalf("предзагрузка настоящей музыки не открылась: %v", r.be.calls)
+	}
+}
+
+// Предзагрузка, открытая до того, как Spotify занял сессию платформы, закрывается в момент занятия: и при замене запуска очереди, и при TakeOver.
+func TestPrefetchOpenedEarlierIsClosedWhenSpotifyTakesTheSession(t *testing.T) {
+	waitClosed := func(r *rig, id string) {
+		t.Helper()
+		for end := time.Now().Add(time.Second); time.Now().Before(end); time.Sleep(5 * time.Millisecond) {
+			if r.be.has("close " + id) {
+				return
+			}
+		}
+		t.Fatalf("плеер %s не закрыт: %v", id, r.be.calls)
+	}
+	r := newRig(t)
+	r.m.Handle(nil, prefetchCmd(otherPlayer, "5"))
+	if !r.be.has("open " + otherPlayer + " 5") {
+		t.Fatal("предзагрузка без Spotify должна открыться")
+	}
+	r.m.SetVirtual(vtrack(true))
+	r.m.ArmCarrier(3 * time.Second)
+	r.m.Handle(nil, playCmd(yandexPlayer, yandexTrack, 0))
+	waitClosed(r, otherPlayer)
+
+	r2 := newRig(t)
+	r2.m.Handle(nil, playCmd(yandexPlayer, yandexTrack, 0))
+	r2.m.Handle(nil, prefetchCmd(otherPlayer, "5"))
+	r2.m.SetVirtual(vtrack(true))
+	if r2.m.TakeOver() != 1 {
+		t.Fatal("TakeOver не остановил играющий плеер Яндекса")
+	}
+	waitClosed(r2, otherPlayer)
+	waitClosed(r2, yandexPlayer)
+}

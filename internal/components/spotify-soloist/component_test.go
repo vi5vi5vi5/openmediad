@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	playctl "openmediad/internal/core/control"
 	"openmediad/internal/core/quasar/mediad"
 	"openmediad/internal/libs/volmap"
 )
@@ -191,6 +192,7 @@ func TestComponentEndToEnd(t *testing.T) {
 
 	cfg := defaults()
 	cfg.Dir, cfg.WSPort, cfg.FixCP15 = dir, freePort(t), false
+	cfg.ClientID = "abcdefghijklmnop1234" // Web API настроен, а входа нет: статус должен об этом сказать
 	p := newPaths(dir, run, "")
 	writeFile(t, p.soloist(), []byte("не нужен: загрузчик — копия тестового бинарника"))
 	writeFile(t, p.loader(), selfBytes)
@@ -211,6 +213,13 @@ func TestComponentEndToEnd(t *testing.T) {
 	logs.Store([]string{})
 	logf := func(f string, a ...any) { logs.Store(append(logs.Load().([]string), fmt.Sprintf(f, a...))) }
 	c := newComponent(*cfg, eng, mach, logf, run)
+	// уступку звука между Spotify и Яндексом ведёт ядро: демон запускает hub.Run рядом с компонентами
+	hub := &playctl.Hub{Platform: mach, Logf: logf}
+	hub.Add(Name, c)
+	c.hub = hub
+	hubCtx, stopHub := context.WithCancel(context.Background())
+	defer stopHub()
+	go hub.Run(hubCtx)
 
 	if err := c.Start(context.Background()); err != nil {
 		t.Fatal(err)
@@ -220,6 +229,9 @@ func TestComponentEndToEnd(t *testing.T) {
 	waitFor(t, "звук Soloist дошёл до вывода движка", func() bool { return o.total() > 4800 })
 	waitFor(t, "заиграл Spotify: музыка Яндекса на паузе", func() bool { return mach.pauses.Load() == 1 })
 	waitFor(t, "вход виден в статусе", func() bool { return strings.Contains(c.StatusLine(), "в списке Spotify") })
+	if line := c.StatusLine(); !strings.Contains(line, "Web API: нет входа") || !strings.Contains(line, "лайки") {
+		t.Fatalf("в статусе нет предупреждения о Web API: %q", line)
+	}
 	waitFor(t, "играет: исполнитель и трек", func() bool {
 		return strings.Contains(c.StatusLine(), "играет: Группа, Гость — Песня")
 	})

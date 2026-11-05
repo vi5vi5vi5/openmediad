@@ -7,8 +7,10 @@ import (
 	"sync"
 	"time"
 
+	"openmediad/internal/core/control"
 	"openmediad/internal/core/led"
 	"openmediad/internal/core/registry"
+	"openmediad/internal/libs/clockled"
 	"openmediad/internal/libs/ringled"
 )
 
@@ -27,6 +29,26 @@ type Component struct {
 	an     animator      // время жизни вспышки
 	shown  ringled.Frame // кадр вспышки на полной яркости: после паузы панель уже пуста, а гаснуть плавно надо именно им
 
+	hub        *control.Hub                     // ядро: события плееров (пауза, перемотка); nil — без анимаций
+	unsub      func()                           // отписка от событий
+	patterns   map[control.Cmd]*ringled.Pattern // штатные анимации плеера из прошивки
+	patternDir string                           // каталог анимаций (в тестах подменяется)
+	fx         *effect                          // анимация, которая играет сейчас
+	fxLog      []string                         // последние решения по анимациям (для разбора)
+	wake       chan struct{}                    // разбудить animate: началась анимация
+
+	// дисплей с часами: анимации паузы и перемотки (displayfx.go)
+	openClock  func() (clockled.Device, error) // nil — дисплея нет (в тестах подменяется)
+	clockDir   string                          // каталог анимаций дисплея (в тестах подменяется)
+	clock      clockled.Device
+	player     *clockled.Player
+	clockAnims map[control.Cmd]*clockled.Anim // штатные анимации дисплея из прошивки
+	curAnim    func() ringled.Anim            // что прошивка показывает сейчас (по её логу)
+	ctx        context.Context
+	env        *registry.Env
+	// holdSpectrum убирает спектр музыки с дисплея и возвращает функцию, которая его возвращает; nil — службы display-spectrum нет
+	holdSpectrum func() func()
+
 	dev    ringled.Device
 	keeper *ringled.Keeper
 	stop   func()
@@ -44,44 +66,81 @@ func newComponent(env *registry.Env, cfg any) (any, error) {
 		return nil, fmt.Errorf("led-ring: нет панели индикации")
 	}
 	colors, _ := parseColors(c.Colors)
+	hub, _ := registry.Use[*control.Hub](env, "control")
 	return &Component{
-		panel: p, logf: env.Logf("led"), cfg: *c, colors: colors,
-		open: func() (ringled.Device, error) { return ringled.OpenFB(ringled.FBPath) },
+		panel: p, logf: env.Logf("led"), cfg: *c, colors: colors, hub: hub, env: env,
+		open:      func() (ringled.Device, error) { return ringled.OpenFB(ringled.FBPath) },
+		openClock: func() (clockled.Device, error) { return clockled.OpenSysfs() },
 	}, nil
 }
 
-// Start открывает кольцо и подписывается на панель. Нет /dev/fb0 (не Мини 3) — просто сообщает об этом.
+// Start открывает кольцо и дисплей и подписывается на панель и на события плееров. Каждое устройство само по себе: нет /dev/fb0 (не Мини 3) — нет
+// кольца, но дисплей работает, и наоборот. Нет обоих — просто сообщает об этом.
 func (c *Component) Start(ctx context.Context) error {
-	dev, err := c.open()
-	if err != nil {
-		c.logf("подсветка кольца не работает: %v (нужна Станция Мини 3, устройство %s)", err, ringled.FBPath)
+	ringDev, ringErr := c.open()
+	var clockDev clockled.Device
+	clockErr := errNoDisplay
+	if c.openClock != nil && c.config().Animations {
+		clockDev, clockErr = c.openClock()
+	}
+	if ringErr != nil && clockErr != nil {
+		c.logf("подсветка не работает: кольцо — %v (нужна Станция Мини 3, устройство %s), дисплей — %v", ringErr, ringled.FBPath, clockErr)
 		return nil
 	}
-	c.dev = dev
-	anim := c.anim
-	var w *ringled.Watcher
-	if anim == nil {
-		w = &ringled.Watcher{}
-		anim = w.Current
-	}
-	c.keeper = &ringled.Keeper{Dev: dev, Anim: anim, Logf: c.logf}
 	ctx, c.cancel = context.WithCancel(ctx)
-	if w != nil {
+	c.ctx = ctx
+	c.wake = make(chan struct{}, 1)
+	anim := c.anim
+	if anim == nil {
+		w := &ringled.Watcher{}
+		anim = w.Current
 		c.wg.Add(1)
 		go func() { defer c.wg.Done(); w.Run(ctx) }()
 	}
-	c.wg.Add(1)
-	go func() { defer c.wg.Done(); c.keeper.Run(ctx) }()
-	c.wg.Add(1)
-	go func() { defer c.wg.Done(); c.animate(ctx) }()
-	c.stop = c.panel.Watch(c.onPanel)
+	c.curAnim = anim
+	if ringErr == nil {
+		c.dev = ringDev
+		c.keeper = &ringled.Keeper{Dev: ringDev, Anim: anim, Logf: c.logf}
+		c.wg.Add(2)
+		go func() { defer c.wg.Done(); c.keeper.Run(ctx) }()
+		go func() { defer c.wg.Done(); c.animate(ctx) }()
+		c.stop = c.panel.Watch(c.onPanel)
+	} else {
+		c.logf("кольцо логотипа не работает: %v (устройство %s)", ringErr, ringled.FBPath)
+	}
+	if clockErr == nil {
+		c.clock = clockDev
+		c.player = &clockled.Player{Dev: clockDev, Logf: c.logf}
+		c.loadClockAnims()
+		if c.holdSpectrum == nil && c.env != nil { // служба другого компонента; к запуску модулей все компоненты уже созданы
+			c.holdSpectrum, _ = registry.Use[func() func()](c.env, spectrumHoldService)
+		}
+	} else if c.openClock != nil && c.config().Animations {
+		c.logf("дисплей с часами не работает: %v", clockErr)
+	}
+	if c.hub != nil {
+		if c.config().RingAnimations {
+			c.loadPatterns()
+		}
+		c.unsub = c.hub.Subscribe(c.onEvent)
+	}
 	return nil
 }
 
-// Stop отдаёт кольцо прошивке.
+// errNoDisplay — дисплей не запрашивался (отключён в настройках или не передан компоненту).
+var errNoDisplay = fmt.Errorf("дисплей выключен в настройках (animations = false)")
+
+// Stop отдаёт кольцо прошивке и возвращает дисплею то, что на нём было.
 func (c *Component) Stop() {
 	if c.stop != nil {
 		c.stop()
+	}
+	if c.unsub != nil {
+		c.unsub()
+		c.unsub = nil
+	}
+	if c.player != nil {
+		c.player.Close()
 	}
 	if c.cancel != nil {
 		c.cancel()
@@ -89,6 +148,9 @@ func (c *Component) Stop() {
 		c.cancel = nil
 	}
 	if cl, ok := c.dev.(interface{ Close() error }); ok {
+		cl.Close()
+	}
+	if cl, ok := c.clock.(interface{ Close() error }); ok {
 		cl.Close()
 	}
 }
@@ -120,26 +182,35 @@ func sameEntry(a, b *led.Entry) bool {
 	return a.Name == b.Name
 }
 
-// animate двигает вспышку: раз в 50 мс пересчитывает яркость, пока кольцо горит или гаснет.
+// animate двигает вспышку и анимации плеера: раз в 50 мс пересчитывает яркость, пока кольцо горит или гаснет, а пока играет анимация прошивки
+// (её кадры по 20 мс), — раз в 20 мс.
 func (c *Component) animate(ctx context.Context) {
-	t := time.NewTicker(50 * time.Millisecond)
-	defer t.Stop()
 	for {
+		d := 50 * time.Millisecond
+		if c.effectActive() {
+			d = 20 * time.Millisecond
+		}
 		select {
 		case <-ctx.Done():
 			return
-		case now := <-t.C:
-			c.step(now)
+		case <-c.wake:
+		case <-time.After(d):
+			c.step(time.Now())
 		}
 	}
 }
 
-// step собирает кадр из состояния панели, настроек и уровня вспышки и отдаёт его хранителю кольца.
+// step собирает кадр из состояния панели, настроек, уровня вспышки и анимации плеера и отдаёт его хранителю кольца.
 func (c *Component) step(now time.Time) {
 	if c.keeper == nil {
 		return
 	}
 	c.mu.Lock()
+	if f, ok := c.effectFrame(now); ok { // анимация плеера важнее вспышки: идёт поверх неё, вспышка продолжится после
+		c.mu.Unlock()
+		c.keeper.Show(f)
+		return
+	}
 	if !c.an.Active() {
 		c.mu.Unlock()
 		c.keeper.Release() // вспышка отменена или кончилась: кольцо прошивке (если оно ещё наше)
@@ -240,6 +311,36 @@ func (c *Component) DebugState() any {
 			frame = append(frame, z.Hex())
 		}
 		st["frame"] = frame
+		var trace []string
+		for _, e := range c.keeper.Trace() {
+			trace = append(trace, e.At.Format("15:04:05.000")+" "+e.What+" "+briefFrame(e.Frame))
+		}
+		st["trace"] = trace
 	}
+	c.mu.Lock()
+	st["animations_log"] = append([]string(nil), c.fxLog...)
+	st["spectrum_hold"] = c.holdSpectrum != nil // служба display-spectrum найдена: на время анимации спектр музыки убирается
+	c.mu.Unlock()
 	return st
+}
+
+// briefFrame — кадр коротко для разбора: «всё #e800f3», «z3=#00ff40 z0=#0060ff» или «чёрный».
+func briefFrame(f ringled.Frame) string {
+	if f.IsZero() {
+		return "чёрный"
+	}
+	same := true
+	for _, z := range f {
+		same = same && z == f[0]
+	}
+	if same {
+		return "всё " + f[0].Hex()
+	}
+	var parts []string
+	for i, z := range f {
+		if !z.IsZero() {
+			parts = append(parts, fmt.Sprintf("z%d=%s", i, z.Hex()))
+		}
+	}
+	return strings.Join(parts, " ")
 }

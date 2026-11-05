@@ -34,7 +34,8 @@ type playRequest struct {
 	Query    string   // что искать (нормализованный текст без глагола и слов-категорий)
 	Whole    string   // всё после глагола, как сказано (для поиска среди своих названий)
 	Kind     playKind // что просят
-	Explicit bool     // в просьбе было слово-категория: она точно про музыку
+	Explicit bool     // в просьбе было слово-категория или названо само Spotify: она точно про музыку
+	Start    bool     // Spotify назван, а искать нечего («включи спотифай», «включи музыку в спотике»): просто запустить Spotify
 }
 
 var playVerbs = map[string]bool{
@@ -59,8 +60,19 @@ var links = map[string]playKind{
 	"жанре": kindGenre, "жанра": kindGenre, "жанр": kindGenre, "в": kindAny, "по": kindAny,
 }
 
-var spotifyWords = map[string]bool{"спотифай": true, "спотифае": true, "спотик": true, "спотике": true, "spotify": true}
-var servicePreps = map[string]bool{"в": true, "на": true, "из": true, "через": true}
+// Названия сервиса («спотифай», «спотик», «Spotify»), предлоги перед ними («в», «на») и целые фразы запуска лежат в файле phrases.txt
+// (phrasebook.go), а не здесь: список длинный, его правят руками.
+
+// startVerbs — глаголы, с которыми просьба «запусти сервис» понятна, только если назван сам Spotify («открой спотифай»; «открой окно» — не наша).
+var startVerbs = map[string]bool{"открой": true, "открыть": true, "переключись": true, "переключи": true, "перейди": true, "запускай": true}
+
+// genericRest — что может остаться от просьбы, когда слова про сервис убраны, чтобы просьба всё равно значила «просто запусти Spotify»:
+// «включи музыку на спотифае», «включи что-нибудь из спотика».
+var genericRest = map[string]bool{
+	"": true, "музыку": true, "музыка": true, "музон": true, "музыки": true, "песню": true, "песни": true, "треки": true, "что нибудь": true,
+	"что угодно": true, "любую музыку": true, "какую нибудь музыку": true, "какую нибудь песню": true, "любую песню": true, "что нибудь послушать": true,
+	"музыку послушать": true, "послушать": true, "послушать музыку": true,
+}
 
 // stopObjects — первое слово такого названия означает не музыку (устройства, режимы, «видео»); без категории искать их в Spotify не нужно.
 var stopObjects = map[string]bool{
@@ -74,13 +86,24 @@ var stopObjects = map[string]bool{
 	"навык": true, "игру": true, "шторы": true, "занавески": true, "кино": false, // «кино» — и фильмы, и группа: решает облако
 }
 
+// parsePlayRequest разбирает фразу по встроенной книге фраз (тесты); компонент пользуется книгой из файла.
+func parsePlayRequest(text string) (playRequest, bool) { return builtinBook.parsePlayRequest(text) }
+
 // parsePlayRequest разбирает фразу. ok=false — это не просьба что-то включить или искать нечего.
-func parsePlayRequest(text string) (req playRequest, ok bool) {
-	t := strings.Fields(normalize(text))
+func (b *phraseBook) parsePlayRequest(text string) (req playRequest, ok bool) {
+	norm := normalize(text)
+	if b.starts[norm] { // целая фраза из файла: просто запустить Spotify
+		return playRequest{Whole: norm, Explicit: true, Start: true}, true
+	}
+	t := strings.Fields(norm)
 	if len(t) >= 3 && t[0] == "хочу" && t[1] == "послушать" {
 		t = append([]string{"включи"}, t[2:]...)
 	}
-	if len(t) < 2 || !playVerbs[t[0]] {
+	// Распознаватель иногда ставит глагол в конец («Spotify включи»): когда Spotify назван, переносим глагол вперёд
+	if n := len(t); n >= 2 && !playVerbs[t[0]] && !startVerbs[t[0]] && (playVerbs[t[n-1]] || startVerbs[t[n-1]]) && b.mentions(t[:n-1]) {
+		t = append([]string{t[n-1]}, t[:n-1]...)
+	}
+	if len(t) < 2 || !playVerbs[t[0]] && !(startVerbs[t[0]] && b.mentions(t[1:])) {
 		return req, false
 	}
 	rest := t[1:]
@@ -96,14 +119,18 @@ func parsePlayRequest(text string) (req playRequest, ok bool) {
 		switch {
 		case strings.HasPrefix(w, "яндекс"):
 			return req, false
-		case spotifyWords[w]:
+		case b.names[w]:
 			req.Explicit = true
-			if len(kept) > 0 && servicePreps[kept[len(kept)-1]] {
+			if len(kept) > 0 && b.preps[kept[len(kept)-1]] {
 				kept = kept[:len(kept)-1]
 			}
 		default:
 			kept = append(kept, w)
 		}
+	}
+	if req.Explicit && genericRest[strings.Join(kept, " ")] { // Spotify назван, а искать нечего: запустить его самого
+		req.Start, req.Whole = true, strings.Join(t[1:], " ")
+		return req, true
 	}
 	if rest = kept; len(rest) == 0 {
 		return req, false

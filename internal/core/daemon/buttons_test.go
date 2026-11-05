@@ -9,26 +9,15 @@ import (
 	"time"
 
 	"openmediad/internal/core/control"
+	"openmediad/internal/core/control/controltest"
 	"openmediad/internal/core/journal"
 	"openmediad/internal/core/quasar/buttons"
 )
 
-type playerStub struct {
-	take bool
-	got  []control.Cmd
-	from []control.Origin
-}
-
-func (p *playerStub) Handle(c control.Cmd, from control.Origin) bool {
-	p.got = append(p.got, c)
-	p.from = append(p.from, from)
-	return p.take
-}
-
 // newPlayerDaemon — демон с Hub'ом и плеерами, подключёнными так же, как это делает attach.
 func newPlayerDaemon(comps ...*component) *daemon {
 	d := &daemon{j: &journal.Journal{Cap: 50}, comps: comps}
-	d.hub = &control.Hub{OnHandled: d.controlHandled}
+	d.hub = &control.Hub{OnHandled: d.controlHandled, Platform: &controltest.Platform{}}
 	for _, c := range comps {
 		if c.err == nil { // как в startComponents: подключается только созданный компонент
 			d.attach(c)
@@ -37,28 +26,34 @@ func newPlayerDaemon(comps ...*component) *daemon {
 	return d
 }
 
-// Плеером становится компонент с Handle; сломанный и безинтерфейсный в Hub не попадают, а действие кнопок колонки уходит туда как команда
-// «откуда: колонка». Выполнил один плеер — остальные команды не видят.
+// yandexPlays включает музыку Яндекса в поддельной платформе демона.
+func yandexPlays(d *daemon) { d.hub.Platform.(*controltest.Platform).SetPlaying(true) }
+
+// Плеером становится компонент с Accepts/State/Do; сломанный и безинтерфейсный в Hub не попадают. Действие кнопок колонки уходит туда
+// командой «откуда: колонка»; выполнил один плеер — остальные команды не видят.
 func TestSpeakerButtonsGoToThePlayersThroughTheHub(t *testing.T) {
-	skip, first, second := &playerStub{}, &playerStub{take: true}, &playerStub{take: true}
+	idle, first, second := controltest.NewPlayer(control.State{}), controltest.NewPlayer(controltest.Playing()), controltest.NewPlayer(controltest.Playing())
 	d := newPlayerDaemon(
 		&component{name: "none", obj: struct{}{}},
-		&component{name: "skip", obj: skip},
+		&component{name: "broken", obj: controltest.NewPlayer(controltest.Playing()), err: errors.New("не запустился")},
+		&component{name: "idle", obj: idle},
 		&component{name: "first", obj: first},
 		&component{name: "second", obj: second},
 	)
 	if d.hub.Len() != 3 {
 		t.Fatalf("плееров в Hub %d, ждали 3", d.hub.Len())
 	}
-	for a, want := range map[buttons.Action]control.Cmd{buttons.Toggle: control.Toggle, buttons.Next: control.Next, buttons.Prev: control.Prev} {
-		first.got, first.from = nil, nil
+	// кнопка при играющем плеере — пауза; жесты — дальше и назад
+	for a, want := range map[buttons.Action]control.Cmd{buttons.Toggle: control.Pause, buttons.Next: control.Next, buttons.Prev: control.Prev} {
+		before := first.Count()
 		d.button(a)
-		if len(first.got) != 1 || first.got[0] != want || first.from[0] != control.Speaker {
-			t.Fatalf("%s: плеер получил %v от %v, ждали %q от колонки", a, first.got, first.from, want)
+		done := first.Done()
+		if len(done) != before+1 || done[before] != (controltest.Done{Cmd: want, From: control.Speaker}) {
+			t.Fatalf("%s: плеер получил %v, ждали %q от колонки", a, done[before:], want)
 		}
 	}
-	if len(second.got) != 0 {
-		t.Fatalf("команда дошла до второго плеера: %v", second.got)
+	if second.Count() != 0 || idle.Count() != 0 {
+		t.Fatalf("команда дошла не тому: второй %v, молчащий %v", second.Done(), idle.Done())
 	}
 }
 
@@ -69,7 +64,9 @@ func TestWatchButtonsFollowsThePlatformLog(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := make(chan control.Cmd, 4)
-	d := newPlayerDaemon(&component{name: "h", obj: &chanPlayer{ch: got}})
+	pl := controltest.NewPlayer(controltest.Playing())
+	pl.OnDo = func(c control.Cmd, _ control.Origin) { got <- c }
+	d := newPlayerDaemon(&component{name: "h", obj: pl})
 	d.platformLog = p
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -83,7 +80,7 @@ func TestWatchButtonsFollowsThePlatformLog(t *testing.T) {
 	f.Close()
 	select {
 	case c := <-got:
-		if c != control.Toggle {
+		if c != control.Pause {
 			t.Fatalf("получили %q", c)
 		}
 	case <-time.After(2 * time.Second):
@@ -91,15 +88,8 @@ func TestWatchButtonsFollowsThePlatformLog(t *testing.T) {
 	}
 }
 
-type chanPlayer struct{ ch chan control.Cmd }
-
-func (c *chanPlayer) Handle(cmd control.Cmd, _ control.Origin) bool {
-	c.ch <- cmd
-	return true
-}
-
 func TestWatchButtonsDoesNothingWithoutPlayers(t *testing.T) {
-	d := newPlayerDaemon(&component{name: "none", obj: struct{}{}}, &component{name: "broken", obj: &playerStub{take: true}, err: errors.New("не запустился")})
+	d := newPlayerDaemon(&component{name: "none", obj: struct{}{}}, &component{name: "broken", obj: controltest.NewPlayer(controltest.Playing()), err: errors.New("не запустился")})
 	d.platformLog = filepath.Join(t.TempDir(), "нет")
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()

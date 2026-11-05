@@ -21,6 +21,10 @@ type Config struct {
 	Always bool          `conf:"always"` // показывать спектр музыки всё время, пока она играет (и после ответа Алисы)
 }
 
+// HoldService — имя общей службы: убрать спектр музыки с дисплея, пока нужно показать что-то другое. Компонент, которому это нужно, ищет её по имени и
+// работает и без неё.
+const HoldService = "spectrum-hold"
+
 const template = `[display-spectrum]       # спектр звука для дисплея и подсветки (сервис iohub)
 enabled = true
 delay = "300ms"          # через сколько после передачи в aplay звук слышен: кадр уходит сразу с меткой «расчёт + delay»;
@@ -42,6 +46,9 @@ func init() {
 			snd := NewSender(cli, cfg.(*Config).Delay, j)
 			eng.OnSpectrum = snd.Add
 			eng.SpectrumAlways = cfg.(*Config).Always
+			if env.Services != nil { // убрать спектр музыки с дисплея на время анимации (led-ring); тип func() (release func())
+				env.Services[HoldService] = snd.Hold
+			}
 			return &module{cli: cli, snd: snd}, nil
 		},
 	})

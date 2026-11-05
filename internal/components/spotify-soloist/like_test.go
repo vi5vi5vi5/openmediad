@@ -86,7 +86,7 @@ func TestFastLikeKeepsTheDialog(t *testing.T) {
 func TestUnlikeDeletes(t *testing.T) {
 	r, f := likeRig(t, nil)
 	r.state(t, "paused")
-	r.c.setOwner(ownerSpotify)
+	r.setOwner(ownerSpotify)
 	if !r.c.InterceptPhrase(reqID, "Убери лайк", false) {
 		t.Fatal("снятие лайка не перехвачено")
 	}

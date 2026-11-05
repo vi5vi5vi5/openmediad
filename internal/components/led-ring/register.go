@@ -18,17 +18,20 @@ const Name = "led-ring"
 // Config — секция [led-ring].
 type Config struct {
 	config.Toggle
-	SourceZone       int           `conf:"source_zone"`       // зона кольца (0…5), где горит источник музыки
-	OutputZone       int           `conf:"output_zone"`       // зона кольца (0…5), где горит выход звука
-	SourceBrightness int           `conf:"source_brightness"` // яркость источника, 0…255
-	OutputBrightness int           `conf:"output_brightness"` // яркость выхода, 0…255
-	Hold             time.Duration `conf:"hold"`              // сколько кольцо горит на полную, когда началась музыка; 0 — пока играет
-	Fade             time.Duration `conf:"fade"`              // за сколько оно потом плавно гаснет
-	Colors           string        `conf:"colors"`            // цвета по именам модулей: "yandex-music=#ffb000 spotify-soloist=#00ff40 bt-out=#0060ff"
+	SourceZone          int           `conf:"source_zone"`          // зона кольца (0…5), где горит источник музыки
+	OutputZone          int           `conf:"output_zone"`          // зона кольца (0…5), где горит выход звука
+	SourceBrightness    int           `conf:"source_brightness"`    // яркость источника, 0…255
+	OutputBrightness    int           `conf:"output_brightness"`    // яркость выхода, 0…255
+	Hold                time.Duration `conf:"hold"`                 // сколько кольцо горит на полную, когда началась музыка; 0 — пока играет
+	Fade                time.Duration `conf:"fade"`                 // за сколько оно потом плавно гаснет
+	Colors              string        `conf:"colors"`               // цвета по именам модулей: "yandex-music=#ffb000 spotify-soloist=#00ff40 bt-out=#0060ff"
+	Animations          bool          `conf:"animations"`           // анимации паузы и перемотки на дисплее с часами (как у штатной музыки), когда прошивка сама их не рисует
+	RingAnimations      bool          `conf:"ring_animations"`      // то же на кольце логотипа (файлы player_*.led)
+	AnimationBrightness int           `conf:"animation_brightness"` // яркость анимаций, 0…255 (255 — как у штатной музыки)
 }
 
 func defaults() *Config {
-	return &Config{Toggle: config.Toggle{Enabled: true}, SourceZone: 3, OutputZone: 0, SourceBrightness: 60, OutputBrightness: 60, Hold: 5 * time.Second, Fade: 2 * time.Second}
+	return &Config{Toggle: config.Toggle{Enabled: true}, SourceZone: 3, OutputZone: 0, SourceBrightness: 60, OutputBrightness: 60, Hold: 5 * time.Second, Fade: 2 * time.Second, Animations: true, AnimationBrightness: 255}
 }
 
 const template = `[led-ring]               # подсветка логотипа Мини 3: какой источник играет и куда идёт звук (шесть зон кольца, /dev/fb0)
@@ -39,6 +42,9 @@ source_brightness = 60   # яркость источника, 0…255
 output_brightness = 60   # яркость выхода, 0…255
 hold = "5s"              # сколько кольцо горит на полную, когда началась музыка (вместе со спектрограммой); "0s" — пока музыка играет
 fade = "2s"              # за сколько оно потом плавно гаснет; "0s" — гаснет сразу
+animations = true        # пауза, следующий и предыдущий трек (кнопками, голосом, наушниками, из приложения Spotify) показывают на дисплее с часами штатные анимации прошивки
+ring_animations = false  # то же на кольце логотипа (вспышка пурпурным); по умолчанию выключено
+animation_brightness = 255  # яркость анимаций, 0…255; 255 — как у штатной музыки
 colors = ""              # свои цвета по именам модулей через пробел, #rrggbb: "yandex-music=#ffb000 spotify-soloist=#00ff40 bt-out=#0060ff speaker=#ffffff";
                          # у модулей есть свои цвета (Яндекс жёлтый, Spotify зелёный, наушники синие), здесь их можно поменять`
 
@@ -64,7 +70,7 @@ func (c *Config) validate() error {
 	for _, b := range []struct {
 		key string
 		v   int
-	}{{"source_brightness", c.SourceBrightness}, {"output_brightness", c.OutputBrightness}} {
+	}{{"source_brightness", c.SourceBrightness}, {"output_brightness", c.OutputBrightness}, {"animation_brightness", c.AnimationBrightness}} {
 		if b.v < 0 || b.v > 255 {
 			return fmt.Errorf("led-ring.%s: %d — яркость 0…255", b.key, b.v)
 		}

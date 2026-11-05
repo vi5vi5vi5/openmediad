@@ -28,6 +28,22 @@ rule_on() { iptables -t nat -S OUTPUT 2>/dev/null | grep -q -- "--to-ports 19906
 rule_add() { rule_on || iptables -t nat -I OUTPUT 1 $RULE; }
 # shellcheck disable=SC2086
 rule_del() { while iptables -t nat -D OUTPUT $RULE 2>/dev/null; do :; done; }
+# При загрузке netfilter может быть ещё не готов. Раз сорвавшееся правило оставляло колонку без openmediad до перезагрузки (платформа
+# подключалась к mediad напрямую), поэтому пробуем до двух минут (24 раза), а сообщение iptables пишем в журнал.
+rule_add_wait() {
+	n=0
+	while :; do
+		if ERR=$(rule_add 2>&1); then
+			[ "$n" -gt 0 ] && log "правило iptables встало с попытки $((n + 1))"
+			return 0
+		fi
+		n=$((n + 1))
+		[ -n "$STOP" ] || [ "$n" -ge 24 ] && break
+		sleep "${OMD_GUARD_RULE_WAIT:-5}"
+	done
+	log "iptables: $ERR"
+	return 1
+}
 # ours PID СЛОВО — процесс жив и в его командной строке есть СЛОВО (pid из файла мог достаться чужому процессу)
 ours() { [ -n "$1" ] && tr '\000' ' ' < "/proc/$1/cmdline" 2>/dev/null | grep -q -- "$2"; }
 
@@ -57,12 +73,15 @@ loop() {
 		DPID=$!
 		echo "$DPID" > "$RUN/daemon.pid"
 		STARTED=$(date +%s)
-		rule_add || log "не удалось добавить правило iptables"
+		if rule_add_wait; then
+			log "демон запущен (pid $DPID), правило iptables стоит"
+		else
+			log "демон запущен (pid $DPID), но правило iptables не встало: платформа идёт к mediad напрямую"
+		fi
 		state "running $DPID $STARTED"
-		log "демон запущен (pid $DPID), правило iptables стоит"
 		# платформа, подключённая к mediad напрямую, сама через шим не пойдёт: reroute ждёт её и при нужде перезапускает
-		# mediad (при первом запуске из openmediad start это делает сама команда)
-		if [ -n "$REROUTE" ]; then "$BIN" reroute >> "$LOG" 2>&1 < /dev/null & fi
+		# mediad (при первом запуске из openmediad start это делает сама команда). Без правила перезапускать mediad незачем.
+		if [ -n "$REROUTE" ] && rule_on; then "$BIN" reroute >> "$LOG" 2>&1 < /dev/null & fi
 		REROUTE=1
 		wait "$DPID"
 		CODE=$?

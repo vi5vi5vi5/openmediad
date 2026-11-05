@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"openmediad/internal/core/config"
+	playctl "openmediad/internal/core/control"
 	"openmediad/internal/core/ctlsock"
 	"openmediad/internal/core/engine"
 	"openmediad/internal/core/led"
@@ -124,6 +125,9 @@ func init() {
 			}
 			if f, ok := registry.Use[func()](env, "swallow-voice"); ok {
 				comp.swallow = f
+			}
+			if h, ok := registry.Use[*playctl.Hub](env, "control"); ok {
+				comp.hub = h
 			}
 			return comp, nil
 		},

@@ -6,25 +6,26 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	playctl "openmediad/internal/core/control"
 )
 
+// Хозяева звука, как их называет ядро.
+const (
+	ownerSpotify = Name
+	ownerYandex  = playctl.OwnerPlatform
+)
+
+// Грамматику управления плеером («пауза», «дальше» …) проверяет ядро (core/control); здесь только фразы самого Spotify.
 func TestPhraseGrammar(t *testing.T) {
 	for text, want := range map[string]action{
-		"Пауза":  actPause,
-		"пауза.": actPause,
-		"Поставь на паузу, пожалуйста!": actPause,
-		"Останови музыку":               actPause,
-		"Продолжи":                      actResume,
-		"Сними с паузы":                 actResume,
-		"Дальше":                        actNext,
-		"Следующая песня":               actNext,
-		"Включи следующий трек":         actNext,
-		"Пропусти":                      actNext,
-		"Назад":                         actPrev,
-		"Предыдущий трек":               actPrev,
-		"Включи предыдущую песню":       actPrev,
-		"  ДАЛЬШЕ  ":                    actNext,
-		"Вернись":                       actPrev,
+		"Лайк":                  actLike,
+		"Поставь лайк":          actLike,
+		"Мне нравится":          actLike,
+		"Убери лайк":            actUnlike,
+		"Включи музыку":         actPlayMusic,
+		"Алиса, включи музыку!": actPlayMusic,
+		"  МУЗЫКУ  ":            actPlayMusic,
 	} {
 		if got := parsePhrase(text); got != want {
 			t.Errorf("%q → %v, ждали %v", text, got, want)
@@ -32,13 +33,12 @@ func TestPhraseGrammar(t *testing.T) {
 	}
 }
 
-// Грамматика узкая: хвосты и похожие просьбы не перехватываются, их слышит Алиса.
+// Грамматика узкая: хвосты и похожие просьбы не перехватываются, их слышит Алиса. Управление воспроизведением в таблицу Spotify не входит.
 func TestPhraseGrammarRejectsLookalikes(t *testing.T) {
 	for _, text := range []string{
-		"", "Алиса", "Что дальше", "Дальше что", "Включи следующую песню группы кино", "Пауза на пять минут", "Поставь таймер на паузу",
-		"Продолжи сказку", "Продолжи рассказ про волка", "Включи музыку Кино", "Включи музыку для сна", "Включи музыку группы Ария", "Включи Кино", "Стоп машина", "Останови будильник",
-		"Стоп", "Алиса, стоп", "Останови", "Остановись", // так же останавливают звонок будильника и таймера: это фраза Алисы
-		"Выключи свет", "Назад в будущее", "Включи назад в будущее", "Сколько времени", "Громче", "Тише", "Что играет", "Дальше по плану",
+		"", "Алиса", "Включи музыку Кино", "Включи музыку для сна", "Включи музыку группы Ария", "Включи Кино", "Лайк на пять минут",
+		"Выключи свет", "Сколько времени", "Громче", "Тише", "Что играет",
+		"Пауза", "Дальше", "Назад", "Продолжи", // это дело ядра: любой плеер движка слушается одинаково
 	} {
 		if got := parsePhrase(text); got != actNone {
 			t.Errorf("%q принято за %v, а это не наша фраза", text, got)
@@ -59,13 +59,38 @@ func TestNormalize(t *testing.T) {
 	}
 }
 
-// voiceRig — компонент с живым управляющим соединением к поддельному Soloist (состояние задают события) и счётчиком отмен диалога.
+// voiceRig — компонент с живым управляющим соединением к поддельному Soloist (состояние задают события), счётчиком отмен диалога и ядром
+// команд плееру (core/control), которое решает, чей звук, как в демоне.
 type voiceRig struct {
 	c       *Component
 	srv     *wsServer
 	mach    *fakeMach
+	hub     *playctl.Hub
 	cancels atomic.Int32
 }
+
+// say — фраза так, как её разбирает демон: управление плеером забирает ядро, остальное (лайк, «включи музыку», «включи <название>») — компонент.
+func (r *voiceRig) say(text string, fast bool) bool {
+	if cmd, ok := playctl.ParsePhrase(text); ok {
+		from := playctl.Voice
+		if fast {
+			from = playctl.FastVoice
+		}
+		return r.hub.Do(cmd, from)
+	}
+	return r.c.InterceptPhrase(reqID, text, fast)
+}
+
+// directive — директива ответа облака так, как её разбирает демон: ядро берёт управление плеером, компонент — остальное (player_like).
+func (r *voiceRig) directive(name string) {
+	if cmd, ok := playctl.ParseDirective(name); ok {
+		r.hub.Do(cmd, playctl.Cloud)
+	}
+	r.c.OnDirective(name)
+}
+
+// setOwner — кто последним начал играть (ядро узнаёт это само, наблюдая за звуком; тесты говорят прямо).
+func (r *voiceRig) setOwner(o string) { r.hub.SetOwner(o) }
 
 func newVoiceRig(t *testing.T, edit func(*Config)) *voiceRig {
 	t.Helper()
@@ -81,7 +106,14 @@ func newVoiceRig(t *testing.T, edit func(*Config)) *voiceRig {
 	r.c.cancelFn = func(context.Context) error { r.cancels.Add(1); return nil }
 	r.c.ctl = newControl(srv.addr(), func(string, ...any) {})
 	r.c.ctl.changed = r.c.virtualPush // как в Start: состояние Soloist доходит до автомата
-	r.mach.OnVirtualCommand(r.c.onVirtualCommand)
+	r.hub = &playctl.Hub{Platform: r.mach}
+	r.hub.Add(Name, r.c)
+	r.c.hub = r.hub
+	r.mach.OnVirtualCommand(func(name string) { // как демон: команда платформы виртуальному плееру идёт ядру
+		if cmd, ok := playctl.ParseVirtual(name); ok {
+			r.hub.Do(cmd, playctl.Virtual)
+		}
+	})
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	go func() { r.c.ctl.run(ctx); close(done) }()
@@ -125,14 +157,14 @@ const reqID = "0b4b6c50-1111-4222-8333-944455556666"
 func TestPauseWhileSpotifyPlaying(t *testing.T) {
 	r := newVoiceRig(t, nil)
 	r.state(t, "playing")
-	if !r.c.InterceptPhrase(reqID, "Пауза", false) {
+	if !r.say("Пауза", false) {
 		t.Fatal("«пауза» при играющем Spotify не перехвачена")
 	}
 	if m := r.command(t); !strings.Contains(m, `"command":"pause"`) {
 		t.Fatalf("в Soloist ушло %s, ждали pause", m)
 	}
 	waitFor(t, "диалог Алисы отменён", func() bool { return r.cancels.Load() == 1 })
-	if st := r.c.voiceStatus(); st.Handled != 1 || st.Last != "пауза" {
+	if st := r.c.voiceStatus(); st.Handled != 1 || st.Last != "голос: пауза" {
 		t.Fatalf("статистика голоса: %+v", st)
 	}
 }
@@ -140,10 +172,10 @@ func TestPauseWhileSpotifyPlaying(t *testing.T) {
 func TestNextAndPrevWhilePlaying(t *testing.T) {
 	r := newVoiceRig(t, nil)
 	r.state(t, "playing")
-	if !r.c.InterceptPhrase(reqID, "Дальше", false) || !strings.Contains(r.command(t), `"skip_next"`) {
+	if !r.say("Дальше", false) || !strings.Contains(r.command(t), `"skip_next"`) {
 		t.Fatal("«дальше» не стало skip_next")
 	}
-	if !r.c.InterceptPhrase(reqID, "Назад", false) || !strings.Contains(r.command(t), `"skip_prev"`) {
+	if !r.say("Назад", false) || !strings.Contains(r.command(t), `"skip_prev"`) {
 		t.Fatal("«назад» не стало skip_prev")
 	}
 }
@@ -152,7 +184,7 @@ func TestNothingInterceptedWhenNotOurs(t *testing.T) {
 	t.Run("не из грамматики", func(t *testing.T) {
 		r := newVoiceRig(t, nil)
 		r.state(t, "playing")
-		if r.c.InterceptPhrase(reqID, "Включи следующую песню группы кино", false) || r.c.InterceptPhrase(reqID, "Сколько времени", false) {
+		if r.say("Включи следующую песню группы кино", false) || r.say("Сколько времени", false) {
 			t.Fatal("чужая фраза перехвачена")
 		}
 		r.noCommand(t)
@@ -163,7 +195,7 @@ func TestNothingInterceptedWhenNotOurs(t *testing.T) {
 	t.Run("Spotify на паузе: «пауза» — не наша", func(t *testing.T) {
 		r := newVoiceRig(t, nil)
 		r.state(t, "paused")
-		if r.c.InterceptPhrase(reqID, "Пауза", false) {
+		if r.say("Пауза", false) {
 			t.Fatal("«пауза» перехвачена, хотя Spotify не играет")
 		}
 		r.noCommand(t)
@@ -172,20 +204,23 @@ func TestNothingInterceptedWhenNotOurs(t *testing.T) {
 		r := newVoiceRig(t, nil)
 		r.state(t, "playing")
 		r.mach.playing.Store(true)
-		if r.c.InterceptPhrase(reqID, "Пауза", false) || r.c.InterceptPhrase(reqID, "Дальше", false) {
+		if r.say("Пауза", false) || r.say("Дальше", false) {
 			t.Fatal("фраза перехвачена, пока играет Яндекс")
 		}
 		r.noCommand(t)
 	})
 	t.Run("не вошли в аккаунт", func(t *testing.T) {
 		r := newVoiceRig(t, nil)
-		if r.c.InterceptPhrase(reqID, "Пауза", false) {
+		if r.say("Пауза", false) {
 			t.Fatal("перехват без входа в Spotify")
 		}
 	})
 	t.Run("нет соединения", func(t *testing.T) {
 		c := newComponent(*defaults(), nil, &fakeMach{}, func(string, ...any) {}, t.TempDir())
-		if c.InterceptPhrase(reqID, "Пауза", false) {
+		h := &playctl.Hub{Platform: &fakeMach{}}
+		h.Add(Name, c)
+		c.hub = h
+		if h.Do(playctl.Pause, playctl.Voice) || c.InterceptPhrase(reqID, "Лайк", false) {
 			t.Fatal("перехват в ненастроенном компоненте")
 		}
 	})
@@ -194,20 +229,20 @@ func TestNothingInterceptedWhenNotOurs(t *testing.T) {
 func TestResumeBelongsToWhoPlayedLast(t *testing.T) {
 	r := newVoiceRig(t, nil)
 	r.state(t, "paused")
-	r.c.setOwner(ownerYandex) // позже играл Яндекс: «продолжи» — его
-	if r.c.InterceptPhrase(reqID, "Продолжи", false) {
+	r.setOwner(ownerYandex) // позже играл Яндекс: «продолжи» — его
+	if r.say("Продолжи", false) {
 		t.Fatal("«продолжи» забрал Spotify, хотя последним играл Яндекс")
 	}
 	r.noCommand(t)
-	r.c.setOwner(ownerSpotify)
-	if !r.c.InterceptPhrase(reqID, "Продолжи", false) {
+	r.setOwner(ownerSpotify)
+	if !r.say("Продолжи", false) {
 		t.Fatal("«продолжи» после паузы Spotify не перехвачена")
 	}
 	if m := r.command(t); !strings.Contains(m, `"command":"play"`) || strings.Contains(m, "uri") {
 		t.Fatalf("продолжение должно быть play без uri: %s", m)
 	}
 	r.mach.playing.Store(true) // Яндекс играет: Spotify на паузе не хозяин
-	if r.c.InterceptPhrase(reqID, "Продолжи", false) {
+	if r.say("Продолжи", false) {
 		t.Fatal("перехват, пока играет Яндекс")
 	}
 }
@@ -215,7 +250,7 @@ func TestResumeBelongsToWhoPlayedLast(t *testing.T) {
 func TestNextWhilePausedIsOurs(t *testing.T) {
 	r := newVoiceRig(t, nil)
 	r.state(t, "paused")
-	if !r.c.InterceptPhrase(reqID, "Следующая песня", false) || !strings.Contains(r.command(t), `"skip_next"`) {
+	if !r.say("Следующая песня", false) || !strings.Contains(r.command(t), `"skip_next"`) {
 		t.Fatal("«следующая» при паузе Spotify не перехвачена")
 	}
 }
@@ -223,7 +258,7 @@ func TestNextWhilePausedIsOurs(t *testing.T) {
 func TestVoiceSwitchesOff(t *testing.T) {
 	r := newVoiceRig(t, func(c *Config) { c.Voice = false })
 	r.state(t, "playing")
-	if r.c.InterceptPhrase(reqID, "Пауза", false) {
+	if r.say("Пауза", false) {
 		t.Fatal("voice = false, а фраза перехвачена")
 	}
 	r.noCommand(t)
@@ -232,7 +267,7 @@ func TestVoiceSwitchesOff(t *testing.T) {
 func TestNoCancelWhenDisabled(t *testing.T) {
 	r := newVoiceRig(t, func(c *Config) { c.VoiceCancel = false })
 	r.state(t, "playing")
-	if !r.c.InterceptPhrase(reqID, "Пауза", false) {
+	if !r.say("Пауза", false) {
 		t.Fatal("фраза не перехвачена")
 	}
 	r.command(t)
@@ -249,7 +284,7 @@ func TestFailedCommandFallsBackToAlice(t *testing.T) {
 	r.c.ctl.mu.Lock()
 	r.c.ctl.conn = nil // состояние ещё «подключён», а записать некуда: Soloist как раз перезапускается
 	r.c.ctl.mu.Unlock()
-	if r.c.InterceptPhrase(reqID, "Пауза", false) {
+	if r.say("Пауза", false) {
 		t.Fatal("фраза перехвачена без соединения с Soloist")
 	}
 	if r.cancels.Load() != 0 {
@@ -265,7 +300,7 @@ func TestVoiceConfigReloadsWithoutRestart(t *testing.T) {
 	if restart := r.c.Reload(&n); len(restart) != 0 {
 		t.Fatalf("voice требует перезапуска демона: %v", restart)
 	}
-	if r.c.InterceptPhrase(reqID, "Пауза", false) {
+	if r.say("Пауза", false) {
 		t.Fatal("после voice = false фразы всё ещё перехватываются")
 	}
 }
@@ -273,18 +308,18 @@ func TestVoiceConfigReloadsWithoutRestart(t *testing.T) {
 func TestDirectiveFromCloudControlsSpotify(t *testing.T) {
 	r := newVoiceRig(t, nil)
 	r.state(t, "playing")
-	r.c.OnDirective("draw_animation_directive") // чужая директива
-	r.c.OnDirective("tts_play_placeholder")
+	r.directive("draw_animation_directive") // чужая директива
+	r.directive("tts_play_placeholder")
 	r.noCommand(t)
-	r.c.OnDirective("player_pause")
+	r.directive("player_pause")
 	if m := r.command(t); !strings.Contains(m, `"command":"pause"`) {
 		t.Fatalf("player_pause стала %s", m)
 	}
-	r.c.OnDirective("player_next_track")
+	r.directive("player_next_track")
 	if m := r.command(t); !strings.Contains(m, `"skip_next"`) {
 		t.Fatalf("player_next_track стала %s", m)
 	}
-	r.c.OnDirective("player_previous_track")
+	r.directive("player_previous_track")
 	if m := r.command(t); !strings.Contains(m, `"skip_prev"`) {
 		t.Fatalf("player_previous_track стала %s", m)
 	}
@@ -296,10 +331,10 @@ func TestDirectiveFromCloudControlsSpotify(t *testing.T) {
 func TestDirectiveResumeOnlyForPausedSpotify(t *testing.T) {
 	r := newVoiceRig(t, nil)
 	r.state(t, "playing")
-	r.c.OnDirective("player_continue") // уже играет
+	r.directive("player_continue") // уже играет
 	r.noCommand(t)
 	r.state(t, "paused")
-	r.c.OnDirective("player_continue")
+	r.directive("player_continue")
 	if m := r.command(t); !strings.Contains(m, `"command":"play"`) {
 		t.Fatalf("player_continue стала %s", m)
 	}
@@ -309,14 +344,14 @@ func TestDirectiveIgnoredWhenYandexOwnsTheSound(t *testing.T) {
 	r := newVoiceRig(t, nil)
 	r.state(t, "playing")
 	r.mach.playing.Store(true)
-	r.c.OnDirective("player_pause")
+	r.directive("player_pause")
 	r.noCommand(t)
 }
 
 func TestDirectiveIgnoredWhenVoiceIsOff(t *testing.T) {
 	r := newVoiceRig(t, func(c *Config) { c.Voice = false })
 	r.state(t, "playing")
-	r.c.OnDirective("player_pause")
+	r.directive("player_pause")
 	r.noCommand(t)
 }
 
@@ -324,13 +359,13 @@ func TestDirectiveIgnoredWhenVoiceIsOff(t *testing.T) {
 func TestDirectiveRightAfterInterceptedPhraseIsAnEcho(t *testing.T) {
 	r := newVoiceRig(t, nil)
 	r.state(t, "playing")
-	if !r.c.InterceptPhrase(reqID, "Дальше", false) {
+	if !r.say("Дальше", false) {
 		t.Fatal("фраза не перехвачена")
 	}
 	r.command(t) // skip_next
-	r.c.OnDirective("player_next_track")
+	r.directive("player_next_track")
 	r.noCommand(t) // пропущен один трек, а не два
-	r.c.OnDirective("player_pause")
+	r.directive("player_pause")
 	if m := r.command(t); !strings.Contains(m, `"command":"pause"`) {
 		t.Fatalf("директива другого действия должна исполняться: %s", m)
 	}
@@ -341,7 +376,7 @@ func TestDirectiveRightAfterInterceptedPhraseIsAnEcho(t *testing.T) {
 func TestFastCommandArmsCarrierAndKeepsDialog(t *testing.T) {
 	r := newVoiceRig(t, nil)
 	r.state(t, "playing")
-	if !r.c.InterceptPhrase(reqID, "Дальше", true) {
+	if !r.say("Дальше", true) {
 		t.Fatal("быстрая команда не перехвачена")
 	}
 	if m := r.command(t); !strings.Contains(m, `"skip_next"`) {
@@ -359,7 +394,7 @@ func TestFastCommandArmsCarrierAndKeepsDialog(t *testing.T) {
 func TestPauseDoesNotArmCarrier(t *testing.T) {
 	r := newVoiceRig(t, nil)
 	r.state(t, "playing")
-	if !r.c.InterceptPhrase(reqID, "Пауза", true) {
+	if !r.say("Пауза", true) {
 		t.Fatal("«пауза» не перехвачена")
 	}
 	r.command(t)
@@ -371,13 +406,13 @@ func TestPauseDoesNotArmCarrier(t *testing.T) {
 func TestResumeAndPrevArmCarrier(t *testing.T) {
 	r := newVoiceRig(t, nil)
 	r.state(t, "paused")
-	r.c.setOwner(ownerSpotify)
-	if !r.c.InterceptPhrase(reqID, "Играй", true) {
+	r.setOwner(ownerSpotify)
+	if !r.say("Играй", true) {
 		t.Fatal("«играй» не перехвачена")
 	}
 	r.command(t)
 	r.state(t, "playing")
-	if !r.c.InterceptPhrase(reqID, "Назад", false) {
+	if !r.say("Назад", false) {
 		t.Fatal("«назад» не перехвачена")
 	}
 	r.command(t)

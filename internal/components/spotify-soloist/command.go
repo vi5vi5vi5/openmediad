@@ -23,7 +23,7 @@ func init() {
 	command.Register("Spotify", command.Command{
 		Name:    "spotify",
 		Summary: "Spotify (Soloist): установка, ключ, обновление, состояние",
-		Usage:   "setup [-from КАТАЛОГ] [-force] | setkey [-file ФАЙЛ] | login [-url АДРЕС | -check | -clear] | alias [add НАЗВАНИЕ ССЫЛКА | rm НАЗВАНИЕ] | rename ИМЯ | update | status | clean [-all] | uninstall -yes",
+		Usage:   "setup [-from КАТАЛОГ] [-force] | setkey [-file ФАЙЛ] | login [-url АДРЕС | -check | -clear] | alias [add НАЗВАНИЕ ССЫЛКА | rm НАЗВАНИЕ] | phrases [test ФРАЗА | reset] | rename ИМЯ | update | status | clean [-all] | uninstall -yes",
 		Help: `Spotify на колонке работает через официальный движок Soloist. Он закрытый, поэтому проект его не содержит:
 установка скачивает его с CDN Spotify прямо на колонку.
 
@@ -41,6 +41,9 @@ func init() {
              openmediad config set spotify-soloist.web_proxy http://адрес:порт (или socks5://адрес:порт)
   alias      свои названия для «Алиса, включи …» без поиска (работает и без Web API): openmediad spotify alias add "кино" <ссылка>,
              alias rm "кино", alias (список). Ссылка: в приложении «Поделиться» → «Копировать ссылку» (плейлист, альбом, исполнитель, трек)
+  phrases    как называют Spotify в голосовых просьбах («спотифай», «спотик», «Spotify»), предлоги и целые фразы запуска. Лежат в файле
+             phrases.txt (правится руками, перечитывается сам). Без параметров — путь, что в файле и не ошибся ли разбор; test "включи музыку в спотике" —
+             как поймётся фраза; reset — вернуть встроенные фразы
   raw        (отладка) отправить Soloist команду WebSocket и показать его ответы: openmediad spotify raw '{"type":"command","command":"get_state"}'
   rename     переименовать колонку в списке устройств Spotify на ходу (Soloist перезапускается за пару секунд):
              openmediad spotify rename "Кухня". То же: openmediad config set spotify-soloist.device_name "Кухня"
@@ -57,7 +60,7 @@ func init() {
 
 func runCommand(c *command.Ctx, args []string) error {
 	if len(args) == 0 {
-		return command.UsageError{Msg: "нужна подкоманда: setup, setkey, login, alias, rename, update, status, clean, uninstall"}
+		return command.UsageError{Msg: "нужна подкоманда: setup, setkey, login, alias, phrases, rename, update, status, clean, uninstall"}
 	}
 	cfg := loadConfig(c)
 	p := newPaths(cfg.Dir, ctlsock.RunDir(), cfg.KeyFile)
@@ -251,6 +254,8 @@ func runCommand(c *command.Ctx, args []string) error {
 			return nil
 		}
 		return command.UsageError{Msg: "alias: list, add НАЗВАНИЕ ССЫЛКА или rm НАЗВАНИЕ"}
+	case "phrases":
+		return runPhrases(c, p, args[1:])
 	case "rename":
 		if len(args) != 2 {
 			return command.UsageError{Msg: "нужно новое имя: openmediad spotify rename \"Кухня\""}

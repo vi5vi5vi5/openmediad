@@ -130,6 +130,7 @@ func Run(ctx context.Context, o Options) error {
 	d.startComponents(ctx)
 	d.watchAliced(ctx, d.dialogLogEnabled())
 	d.watchButtons(ctx)
+	d.startPlayers(ctx)
 
 	go d.signals(ctx, cancel)
 	d.j.Log(journal.Info, "shim", fmt.Sprintf("шим: %s → %s (исходящие с %s)", o.Listen, o.Upstream, o.Src), "", nil)
@@ -161,7 +162,7 @@ func (d *daemon) setupJournal() {
 func (d *daemon) setupEngine() {
 	sp := &speaker.Sink{Aplay: d.cfg.Speaker.Aplay, Device: d.cfg.Speaker.Device}
 	d.led = led.NewPanel()
-	d.hub = &control.Hub{OnHandled: d.controlHandled}
+	d.hub = &control.Hub{OnHandled: d.controlHandled, Logf: d.j.Logf("control")}
 	d.rt = newRouter(d.cfg.Route, sp)
 	d.rt.ind = d.led
 	d.eng = &engine.Engine{Router: d.rt, Logf: d.j.Logf("engine")}
@@ -202,6 +203,7 @@ func (d *daemon) setupShim() error {
 	}
 	d.proxy.Intercept = d.intercept
 	d.proxy.Tap = d.tap
+	d.hub.Platform = d.m // музыка Яндекса: ядро по ней решает, чей звук, и уступает его
 	return nil
 }
 

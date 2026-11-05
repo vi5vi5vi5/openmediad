@@ -2,10 +2,8 @@ package daemon
 
 import (
 	"context"
-	"fmt"
 
 	"openmediad/internal/core/control"
-	"openmediad/internal/core/journal"
 	"openmediad/internal/core/quasar/buttons"
 )
 
@@ -26,10 +24,4 @@ func (d *daemon) button(a buttons.Action) {
 		return
 	}
 	d.hub.Do(cmd, control.Speaker)
-}
-
-// controlHandled пишет в журнал, что плеер движка выполнил команду.
-func (d *daemon) controlHandled(c control.Cmd, from control.Origin, player string) {
-	d.j.Log(journal.Info, "control", fmt.Sprintf("%s (%s): выполнено плеером %s", c, from, player),
-		"Команду плееру отдал источник (кнопки колонки, кнопки наушников); музыку играет движок, а платформа про этот плеер не знает, поэтому выполнил его компонент.", nil)
 }

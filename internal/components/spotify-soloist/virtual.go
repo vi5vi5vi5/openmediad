@@ -1,24 +1,26 @@
 package spotifysoloist
 
-import (
-	"time"
-
-	"openmediad/internal/core/quasar/mediad"
-)
+import "openmediad/internal/core/quasar/mediad"
 
 // Spotify как плеер платформы. Звук Spotify идёт через наш движок, но платформа о нём не знает: плееры музыки она заводит сама по
 // директиве облака, а состояние плееров (играет, пауза, трек) берёт из событий mediad. Облако отвечает на «пауза», «играй», «дальше»
 // без слова «Алиса» по последнему плееру платформы, а слой спектра на дисплее включается по состоянию плеера. Поэтому компонент
 // сообщает автомату состояние Soloist (mediad.Machine.SetVirtual), автомат шлёт платформе те же события, что у своего плеера музыки,
-// а команды платформы этому плееру (пауза, освобождение) приходят обратно в onVirtualCommand и идут в Soloist.
+// а команды платформы этому плееру (пауза, освобождение) приходят обратно демону, он отдаёт их ядру (core/control, источник Virtual), и ядро просит Spotify выполнить.
 
 // startMusic выполняет «включи музыку»: продолжает прошлую сессию Spotify, а если продолжать нечего — запускает music_uri из настроек.
 // false — вмешиваться нечем (отключено или не задан music_uri): фраза остаётся Алисе.
 func (c *Component) startMusic(ps playerState) bool {
-	cfg := c.config()
-	if !cfg.Music {
+	if !c.config().Music {
 		return false
 	}
+	return c.launch(ps)
+}
+
+// launch запускает Spotify: продолжает прошлую сессию, а если продолжать нечего, играет music_uri. false — запускать нечего или не вышло.
+// Настройку music не смотрит: «включи спотифай» названо прямо и ей не подчиняется.
+func (c *Component) launch(ps playerState) bool {
+	cfg := c.config()
 	switch {
 	case ps.URI != "": // Soloist помнит последний трек и после перезапуска, даже если устройство не выбрано в приложении
 		if err := c.ctl.Resume(); err != nil {
@@ -59,30 +61,4 @@ func (c *Component) virtualPush() {
 		DurMs: uint64(max(ps.DurationMS, 0)), PosMs: uint64(max(ps.PositionMS, 0)), PosAt: ps.PositionAt,
 		Playing: ps.Status == "playing",
 	})
-}
-
-// onVirtualCommand — платформа адресовала команду плееру Spotify: пауза или освобождение (кнопка, «Алиса, пауза» с плеером в контексте)
-// ставят Spotify на паузу, play — продолжают.
-func (c *Component) onVirtualCommand(cmd string) {
-	if c.ctl == nil || !c.config().VirtualPlayer {
-		return
-	}
-	c.mu.Lock()
-	c.platformAt = time.Now() // нажатие кнопки платформа уже выполнила сама: из лога его второй раз не повторять (buttons.go)
-	c.mu.Unlock()
-	var err error
-	switch cmd {
-	case "pause", "release":
-		err = c.ctl.Pause()
-	case "play":
-		err = c.ctl.Resume()
-	default:
-		c.logf("платформа → Spotify: непонятная команда %q плееру", cmd)
-		return
-	}
-	if err != nil {
-		c.logf("платформа → Spotify: %s не выполнена: %v", cmd, err)
-		return
-	}
-	c.logf("платформа → Spotify: %s (как плееру музыки)", cmd)
 }

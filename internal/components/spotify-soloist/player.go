@@ -1,90 +1,99 @@
 package spotifysoloist
 
 import (
+	"errors"
+	"fmt"
 	"time"
 
 	playctl "openmediad/internal/core/control"
 )
 
-// Spotify как плеер ядра (core/control). Кнопка Алисы, жесты по колонке и кнопки наушников не знают про Spotify: источник говорит ядру
-// «пауза, откуда-то», а ядро спрашивает плееры, чей сейчас звук. Спросит и нас; мы отвечаем: «моё, сделал» или «не моё».
+// Spotify как плеер ядра (core/control). Кнопка Алисы, жесты по колонке, кнопки наушников, голос и ответы облака не знают про Spotify: источник
+// говорит ядру «пауза, откуда-то», а ядро решает, чей сейчас звук, не повтор ли это, и только потом просит Spotify выполнить. От нас нужно
+// три вещи: ответить, каких источников мы слушаемся (Accepts), что с плеером сейчас (State) и выполнить команду (Do).
 //
-// Платформа же про Spotify ничего не знает, и это важно для нажатий на самой колонке: она адресует их своему плееру. Пауза уходит в пустоту,
-// а жест вперёд-назад она превращает в запрос облаку, и оно запускает очередь Яндекс.Музыки. Демон видит такие нажатия по логу платформы
-// (core/quasar/buttons) раньше, чем придёт ответ облака, и отдаёт их ядру с пометкой Speaker. Кнопки наушников читает только движок, платформа о них
-// не знает и ничего не затеет (Origin.PlatformReacts), поэтому очередь Яндекса для них готовить не нужно.
+// Отдельный путь у нажатий на самой колонке: платформа адресует их своему плееру, а Spotify для неё не плеер. Пауза уходила в пустоту, а
+// жест вперёд-назад она превращает в запрос облаку, и оно запускает очередь Яндекс.Музыки. Демон видит такие нажатия по логу платформы
+// (core/quasar/buttons), а ядро готовит автомат к этому запуску (Origin.PlatformReacts).
 
-// platformCmdEcho — сколько после команды, которую платформа сама адресовала плееру Spotify, нажатие кнопки колонки из лога считается тем же самым:
-// иначе кнопка сработала бы дважды и пауза тут же сменилась бы продолжением.
-const platformCmdEcho = 1500 * time.Millisecond
-
-// Handle — интерфейс control.Player: выполнить команду, если звук сейчас Spotify. false — не наше (играет Яндекс, нет входа, выключено).
-func (c *Component) Handle(cmd playctl.Cmd, from playctl.Origin) bool {
+// Accepts — слушается ли Spotify этого источника (настройки голоса, кнопок и плеера для платформы).
+func (c *Component) Accepts(o playctl.Origin) bool {
 	cfg := c.config()
-	if !cfg.Buttons || c.ctl == nil {
-		return false
+	switch o {
+	case playctl.Voice, playctl.FastVoice, playctl.Cloud:
+		return cfg.Voice
+	case playctl.Speaker, playctl.Headphones:
+		return cfg.Buttons
+	case playctl.Virtual:
+		return cfg.VirtualPlayer
+	case playctl.Arbiter:
+		return true
+	}
+	return false
+}
+
+// State — что сейчас со Spotify.
+func (c *Component) State() playctl.State {
+	if c.ctl == nil {
+		return playctl.State{}
 	}
 	ps := c.ctl.state()
-	if !ps.Connected || !ps.LoggedIn {
-		return false
+	sounding := c.pcm != nil && c.pcm.Playing()
+	// позиция приходит только с событием состояния, между ними она устаревает: играющей досчитываем по часам
+	pos := ps.PositionMS
+	if ps.Status == "playing" && !ps.PositionAt.IsZero() {
+		pos += time.Since(ps.PositionAt).Milliseconds()
 	}
-	var a action
-	switch cmd {
-	case playctl.Next:
-		a = actNext
-	case playctl.Prev:
-		a = actPrev
-	case playctl.Pause:
-		a = actPause
-	case playctl.Resume:
-		a = actResume
-	case playctl.Toggle:
-		if from == playctl.Speaker {
-			c.mu.Lock()
-			echo := time.Since(c.platformAt) < platformCmdEcho
-			c.mu.Unlock()
-			if echo {
-				return false // платформа уже поставила на паузу или сняла сама, как со своим плеером
-			}
-		}
-		switch {
-		case c.owns(actPause, ps):
-			a = actPause
-		case c.owns(actResume, ps):
-			a = actResume
-		default:
-			return false // играет Яндекс или Spotify не хозяин звука: команда достаётся платформе
-		}
-	default:
-		return false
+	return playctl.State{
+		Ready:    ps.Connected && ps.LoggedIn,
+		Playing:  sounding || ps.Status == "playing",
+		Sounding: sounding,
+		// на паузе и выбран в приложении: Soloist помнит сессию, «продолжи» поднимет её
+		Resumable: ps.Status == "paused" && ps.Active,
+		Paused:    ps.Status == "paused",
+		Track:     ps.URI,
+		NearEnd:   ps.DurationMS > 0 && pos >= ps.DurationMS-nearEnd.Milliseconds(),
 	}
-	if !c.owns(a, ps) {
-		return false // во время музыки Яндекса команды его
+}
+
+// nearEnd — за сколько до конца трек считается доигрываемым: следующий после него начался сам, а не перемоткой.
+const nearEnd = 4 * time.Second
+
+// Do выполняет команду в Soloist. Команда уходит без ожидания результата: Soloist принимает команды по WebSocket.
+func (c *Component) Do(cmd playctl.Cmd, from playctl.Origin) error {
+	if c.ctl == nil {
+		return errors.New("нет связи с Soloist")
 	}
 	var err error
-	switch a {
-	case actPause:
+	switch cmd {
+	case playctl.Pause:
 		err = c.ctl.Pause()
-	case actResume:
+	case playctl.Resume:
 		err = c.ctl.Resume()
-	case actNext:
+	case playctl.Next:
 		err = c.ctl.SkipNext()
-	case actPrev:
+	case playctl.Prev:
 		err = c.ctl.SkipPrev()
+	default:
+		return fmt.Errorf("команда %q плееру не передаётся", cmd)
 	}
 	if err != nil {
 		c.logf("%s (%s): не выполнено: %v", cmd, from, err)
-		return false
+		return err
+	}
+	if from == playctl.Arbiter {
+		return nil // уступка звука — не команда пользователя
 	}
 	c.mu.Lock()
 	c.voiceHandled++
 	c.voiceLast = from.String() + ": " + cmd.String()
 	c.voiceAt = time.Now()
-	c.voiceAct = a // «дальше» от облака сразу после жеста — тот же жест
 	c.mu.Unlock()
-	if c.mach != nil && a != actPause && from.PlatformReacts() {
-		// платформа запросит у облака очередь Яндекса (жест, продолжить после паузы): этот запуск достанется Spotify
-		c.mach.ArmCarrier(carrierWindow)
+	if from == playctl.Voice && c.config().VoiceCancel {
+		go c.cancelDialog() // Алиса не должна отвечать «не поняла» на уже выполненную фразу. Ответ быстрой команды локальный и беззвучный, а его анимацию ждут
 	}
-	return true
+	return nil
 }
+
+// Yielded — ядро уступало звук из-за Spotify или ему (для счётчика в статусе).
+func (c *Component) Yielded() { c.noteYield() }

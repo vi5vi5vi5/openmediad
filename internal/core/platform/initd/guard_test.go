@@ -21,7 +21,9 @@ shift 2 # -t nat
 op=$1; shift 2 # -S/-I/-D OUTPUT
 case $op in
 -S) cat "$R" ;;
--I) shift; echo "$*" >> "$R" ;;
+-I) if [ -f "$FAKE/ipt_fail" ] && [ "$(cat "$FAKE/ipt_fail")" -gt 0 ]; then # netfilter ещё не готов: правило не встаёт заданное число раз
+        echo $(($(cat "$FAKE/ipt_fail") - 1)) > "$FAKE/ipt_fail"; echo "no such table" >&2; exit 3; fi
+    shift; echo "$*" >> "$R" ;;
 -D) grep -qxF -- "$*" "$R" || exit 1
     awk -v r="$*" 'BEGIN{d=0} $0==r && !d {d=1; next} {print}' "$R" > "$R.new"; mv "$R.new" "$R" ;;
 esac
@@ -243,6 +245,36 @@ func TestGuardBootReroutesFirstStart(t *testing.T) {
 	f := newFake(t, "live", 3)
 	f.start("boot")
 	f.waitFor("reroute при загрузке", 3*time.Second, func() bool { return f.read("reroute") == "reroute" })
+}
+
+// При загрузке netfilter бывает не готов: правило ставится с повторами, а mediad перезапускается только когда оно встало.
+func TestGuardBootRetriesTheRuleUntilNetfilterIsReady(t *testing.T) {
+	f := newFake(t, "live", 3)
+	os.WriteFile(filepath.Join(f.dir, "ipt_fail"), []byte("3"), 0o644)
+	f.env = append(f.env, "OMD_GUARD_RULE_WAIT=0.05")
+	f.start("boot")
+	f.waitFor("правило после повторов", 5*time.Second, func() bool { return f.rules() == 1 })
+	f.waitFor("reroute после правила", 3*time.Second, func() bool { return f.read("reroute") == "reroute" })
+	if log := f.read("run/guard.log"); !strings.Contains(log, "встало с попытки 4") || !strings.Contains(log, "правило iptables стоит") {
+		t.Errorf("в журнале стража:\n%s", log)
+	}
+}
+
+// Правило так и не встало: об этом честно написано (с сообщением iptables), и mediad зря не перезапускается.
+func TestGuardBootReportsTheRuleThatNeverCame(t *testing.T) {
+	f := newFake(t, "live", 3)
+	os.WriteFile(filepath.Join(f.dir, "ipt_fail"), []byte("1000"), 0o644)
+	f.env = append(f.env, "OMD_GUARD_RULE_WAIT=0.01")
+	f.start("boot")
+	f.waitFor("честная запись о правиле", 10*time.Second, func() bool { return strings.Contains(f.read("run/guard.log"), "не встало") })
+	log := f.read("run/guard.log")
+	if !strings.Contains(log, "iptables: no such table") || strings.Contains(log, "правило iptables стоит") {
+		t.Errorf("в журнале стража:\n%s", log)
+	}
+	time.Sleep(200 * time.Millisecond)
+	if f.read("reroute") != "" || f.rules() != 0 {
+		t.Errorf("reroute=%q, правил %d: без правила перезапускать mediad не нужно", f.read("reroute"), f.rules())
+	}
 }
 
 func TestInitScript(t *testing.T) {

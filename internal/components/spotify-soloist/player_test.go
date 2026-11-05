@@ -3,9 +3,9 @@ package spotifysoloist
 import (
 	"strings"
 	"testing"
-	"time"
 
 	playctl "openmediad/internal/core/control"
+	"openmediad/internal/core/control/controltest"
 )
 
 // Spotify — плеер ядра: интерфейс выполнен (на этом держится подключение в демоне).
@@ -15,7 +15,7 @@ var _ playctl.Player = (*Component)(nil)
 func TestToggleFromTheSpeakerPausesPlayingSpotify(t *testing.T) {
 	r := newVoiceRig(t, nil)
 	r.state(t, "playing")
-	if !r.c.Handle(playctl.Toggle, playctl.Speaker) {
+	if !r.hub.Do(playctl.Toggle, playctl.Speaker) {
 		t.Fatal("кнопка при играющем Spotify не выполнена")
 	}
 	if m := r.command(t); !strings.Contains(m, `"command":"pause"`) {
@@ -33,8 +33,8 @@ func TestToggleFromTheSpeakerPausesPlayingSpotify(t *testing.T) {
 func TestToggleFromTheSpeakerResumesPausedSpotifyAndArmsCarrier(t *testing.T) {
 	r := newVoiceRig(t, nil)
 	r.state(t, "paused")
-	r.c.setOwner(ownerSpotify)
-	if !r.c.Handle(playctl.Toggle, playctl.Speaker) {
+	r.setOwner(ownerSpotify)
+	if !r.hub.Do(playctl.Toggle, playctl.Speaker) {
 		t.Fatal("кнопка при Spotify на паузе не выполнена")
 	}
 	if m := r.command(t); !strings.Contains(m, `"command":"play"`) {
@@ -54,7 +54,7 @@ func TestHeadphonesPauseResumeAndSkipDoNotArmTheCarrier(t *testing.T) {
 		cmd  playctl.Cmd
 		want string
 	}{{playctl.Toggle, `"command":"pause"`}, {playctl.Next, `"skip_next"`}, {playctl.Prev, `"skip_prev"`}} {
-		if !r.c.Handle(step.cmd, playctl.Headphones) {
+		if !r.hub.Do(step.cmd, playctl.Headphones) {
 			t.Fatalf("%s с наушников не выполнено", step.cmd)
 		}
 		if m := r.command(t); !strings.Contains(m, step.want) {
@@ -62,8 +62,8 @@ func TestHeadphonesPauseResumeAndSkipDoNotArmTheCarrier(t *testing.T) {
 		}
 	}
 	r.state(t, "paused")
-	r.c.setOwner(ownerSpotify)
-	if !r.c.Handle(playctl.Toggle, playctl.Headphones) {
+	r.setOwner(ownerSpotify)
+	if !r.hub.Do(playctl.Toggle, playctl.Headphones) {
 		t.Fatal("продолжить с наушников не выполнено")
 	}
 	if m := r.command(t); !strings.Contains(m, `"command":"play"`) {
@@ -82,40 +82,29 @@ func TestPlatformEchoGuardOnlyForTheSpeaker(t *testing.T) {
 	r.mach.platformCommand("pause")
 	r.command(t)
 	r.state(t, "paused")
-	r.c.setOwner(ownerSpotify)
-	if r.c.Handle(playctl.Toggle, playctl.Speaker) {
+	r.setOwner(ownerSpotify)
+	if r.hub.Do(playctl.Toggle, playctl.Speaker) {
 		t.Fatal("то же нажатие на колонке выполнено второй раз")
 	}
 	r.noCommand(t)
-	if !r.c.Handle(playctl.Toggle, playctl.Headphones) {
+	if !r.hub.Do(playctl.Toggle, playctl.Headphones) {
 		t.Fatal("нажатие в наушниках проглочено защитой от повтора колонки")
 	}
 	if m := r.command(t); !strings.Contains(m, `"command":"play"`) {
 		t.Fatalf("в Soloist ушло %s, ждали play", m)
 	}
-	// и через пару секунд кнопка колонки снова обычная
-	time.Sleep(10 * time.Millisecond)
-	r.state(t, "playing")
-	r.c.mu.Lock()
-	r.c.platformAt = time.Now().Add(-2 * platformCmdEcho)
-	r.c.mu.Unlock()
-	if !r.c.Handle(playctl.Toggle, playctl.Speaker) {
-		t.Fatal("нажатие через пару секунд после команды платформы потеряно")
-	}
-	if m := r.command(t); !strings.Contains(m, `"command":"pause"`) {
-		t.Fatalf("в Soloist ушло %s, ждали pause", m)
-	}
+	// сколько времени защита действует, проверяет ядро на своих часах (core/control)
 }
 
 // Явные «пауза» и «продолжить» (не переключатель) выполняются по тем же правилам хозяина звука.
 func TestExplicitPauseAndResume(t *testing.T) {
 	r := newVoiceRig(t, nil)
 	r.state(t, "playing")
-	if r.c.Handle(playctl.Resume, playctl.Headphones) {
+	if r.hub.Do(playctl.Resume, playctl.Headphones) {
 		t.Fatal("«продолжить» при играющем Spotify выполнено")
 	}
 	r.noCommand(t)
-	if !r.c.Handle(playctl.Pause, playctl.Headphones) {
+	if !r.hub.Do(playctl.Pause, playctl.Headphones) {
 		t.Fatal("«пауза» при играющем Spotify не выполнена")
 	}
 	if m := r.command(t); !strings.Contains(m, `"command":"pause"`) {
@@ -127,13 +116,13 @@ func TestExplicitPauseAndResume(t *testing.T) {
 func TestSwipeSkipsTracksAndArmsCarrier(t *testing.T) {
 	r := newVoiceRig(t, nil)
 	r.state(t, "playing")
-	if !r.c.Handle(playctl.Next, playctl.Speaker) {
+	if !r.hub.Do(playctl.Next, playctl.Speaker) {
 		t.Fatal("жест вперёд не выполнен")
 	}
 	if m := r.command(t); !strings.Contains(m, `"skip_next"`) {
 		t.Fatalf("жест вперёд стал %s", m)
 	}
-	if !r.c.Handle(playctl.Prev, playctl.Speaker) {
+	if !r.hub.Do(playctl.Prev, playctl.Speaker) {
 		t.Fatal("жест назад не выполнен")
 	}
 	if m := r.command(t); !strings.Contains(m, `"skip_prev"`) {
@@ -151,11 +140,11 @@ func TestSwipeSkipsTracksAndArmsCarrier(t *testing.T) {
 func TestSpotifyLeavesYandexMusicAlone(t *testing.T) {
 	r := newVoiceRig(t, nil)
 	r.state(t, "paused")
-	r.c.setOwner(ownerSpotify)
+	r.setOwner(ownerSpotify)
 	r.mach.playing.Store(true)
 	for _, from := range []playctl.Origin{playctl.Speaker, playctl.Headphones} {
 		for _, cmd := range []playctl.Cmd{playctl.Toggle, playctl.Pause, playctl.Resume, playctl.Next, playctl.Prev} {
-			if r.c.Handle(cmd, from) {
+			if r.hub.Do(cmd, from) {
 				t.Fatalf("%s (%s) выполнено в Spotify, пока играет Яндекс", cmd, from)
 			}
 		}
@@ -169,7 +158,7 @@ func TestSpotifyLeavesYandexMusicAlone(t *testing.T) {
 func TestPlayerCommandsCanBeSwitchedOff(t *testing.T) {
 	r := newVoiceRig(t, func(c *Config) { c.Buttons = false })
 	r.state(t, "playing")
-	if r.c.Handle(playctl.Toggle, playctl.Headphones) || r.c.Handle(playctl.Next, playctl.Speaker) {
+	if r.hub.Do(playctl.Toggle, playctl.Headphones) || r.hub.Do(playctl.Next, playctl.Speaker) {
 		t.Fatal("кнопки выключены, а Spotify среагировал")
 	}
 	r.noCommand(t)
@@ -177,8 +166,18 @@ func TestPlayerCommandsCanBeSwitchedOff(t *testing.T) {
 
 func TestPlayerIgnoresCommandsWithoutLogin(t *testing.T) {
 	r := newVoiceRig(t, nil) // событий входа не было: Soloist подключён, но не вошёл
-	if r.c.Handle(playctl.Toggle, playctl.Headphones) {
+	if r.hub.Do(playctl.Toggle, playctl.Headphones) {
 		t.Fatal("команда выполнена без входа в Spotify")
 	}
 	r.noCommand(t)
+}
+
+// Spotify — хороший плеер движка: выполняет договор из core/control/controltest (источники, State, отказ на Toggle, Do не зависает).
+func TestSpotifyFollowsThePlayerContract(t *testing.T) {
+	r := newVoiceRig(t, nil)
+	r.state(t, "playing")
+	controltest.CheckPlayer(t, r.c)
+	// и без связи с Soloist: State пустой, Do отвечает ошибкой, а не паникой
+	bare := newComponent(*defaults(), nil, &fakeMach{}, func(string, ...any) {}, t.TempDir())
+	controltest.CheckPlayer(t, bare)
 }

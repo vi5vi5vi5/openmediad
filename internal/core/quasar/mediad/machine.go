@@ -148,6 +148,12 @@ func (m *Machine) Handle(ctx any, c msg.AudioCommand) bool {
 		if p.Kind == msg.PlayerAudio && m.carrierArmed() {
 			return m.adoptCommand(k, c)
 		}
+		if k == msg.CmdPrefetch && p.Kind == msg.PlayerAudio && m.heldBySpotify() {
+			// Сессию платформы занял Spotify: следующий трек очереди Яндекса до воспроизведения не дойдёт, а открытый заранее он качается, декодируется
+			// отдельным процессом и лежит в памяти до освобождения, которого платформа не пришлёт.
+			m.note("carrier", p.ID, "prefetch принят без загрузки: сессия платформы занята Spotify")
+			return true
+		}
 		if m.NoMusic || p.Kind != msg.PlayerAudio || m.isForeign(p.ID) {
 			return false
 		}

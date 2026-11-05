@@ -64,6 +64,7 @@ const (
 	NeedMaster      = "alsa-master"     // регулятор громкости ALSA Master
 	NeedNetwork     = "network"         // сеть
 	NeedLogoFB      = "logo-fb"         // /dev/fb0: кольцо подсветки логотипа Станции Мини 3
+	NeedClockLEDs   = "clock-leds"      // /sys/class/leds/bergamot:white:clock*: сегменты дисплея с часами Станции Мини 3
 	NeedCP15Barrier = "cp15-barrier"    // abi.cp15_barrier = 2: старые 32-битные программы исполняют барьеры памяти ARMv6 аппаратно
 )
 

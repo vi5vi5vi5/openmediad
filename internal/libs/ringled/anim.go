@@ -20,13 +20,19 @@ const MaindLog = "/data/quasar/daemons_logs/maind.log"
 //
 // где первые скобки — анимации кольца, вторые — часов.
 type Anim struct {
-	Ring []string
-	At   time.Time // когда строка появилась в логе (нулевое — найдена при старте)
+	Ring  []string
+	Clock []string  // анимации дисплея с часами: «<Animation>» (время), spectrogram, thinkingWithDelay, clock/alice_*.binscled.zst …
+	At    time.Time // когда строка появилась в логе (нулевое — найдена при старте)
 }
 
 // RingIdle — кольцо в покое: прошивка закончила на idle.led (всё погашено) или ничего не показывает.
 func (a Anim) RingIdle() bool {
 	return len(a.Ring) == 0 || path.Base(a.Ring[len(a.Ring)-1]) == "idle.led"
+}
+
+// ClockIdle — дисплей свободен: прошивка показывает время («<Animation>») или ничего не сообщала. Спектр музыки, «думаю» и анимации Алисы — заняты.
+func (a Anim) ClockIdle() bool {
+	return len(a.Clock) == 0 || a.Clock[len(a.Clock)-1] == "<Animation>"
 }
 
 var playRe = regexp.MustCompile(`Play animations: \[ (.*?) \] \[ (.*?) \]`)
@@ -43,7 +49,11 @@ func parseLine(line []byte) (Anim, bool) {
 	for _, f := range strings.Fields(string(m[1])) {
 		ring = append(ring, path.Base(f))
 	}
-	return Anim{Ring: ring}, true
+	var clock []string
+	for _, f := range strings.Fields(string(m[2])) {
+		clock = append(clock, path.Base(f))
+	}
+	return Anim{Ring: ring, Clock: clock}, true
 }
 
 // Watcher следит за логом прошивки и помнит последнее переключение анимаций.

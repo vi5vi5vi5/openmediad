@@ -6,20 +6,9 @@ import (
 	"testing"
 
 	"openmediad/internal/core/control"
+	"openmediad/internal/core/control/controltest"
 	"openmediad/internal/libs/aliced-client"
 )
-
-type routePlayer struct {
-	take bool
-	got  []control.Cmd
-	from []control.Origin
-}
-
-func (p *routePlayer) Handle(c control.Cmd, from control.Origin) bool {
-	p.got = append(p.got, c)
-	p.from = append(p.from, from)
-	return p.take
-}
 
 // routeRig — маршрут нажатий с записью того, что ушло платформе.
 type routeRig struct {
@@ -31,7 +20,7 @@ type routeRig struct {
 	fail   error
 }
 
-func newRouteRig(players ...*routePlayer) *routeRig {
+func newRouteRig(players ...*controltest.Player) *routeRig {
 	h := &control.Hub{}
 	for _, p := range players {
 		h.Add("плеер", p)
@@ -47,15 +36,16 @@ func newRouteRig(players ...*routePlayer) *routeRig {
 	return g
 }
 
-// Плеер движка (Spotify) взял команду — платформа о нажатии не узнаёт.
+// Плеер движка (Spotify) играет — команду выполняет он, платформа о нажатии не узнаёт.
 func TestPlayerGetsTheButtonFirstAndPlatformStaysOut(t *testing.T) {
-	p := &routePlayer{take: true}
+	p := controltest.NewPlayer(controltest.Playing())
 	g := newRouteRig(p)
-	for b, want := range map[Button]control.Cmd{ButtonPlayPause: control.Toggle, ButtonStop: control.Pause, ButtonNext: control.Next, ButtonPrev: control.Prev} {
-		p.got, p.from = nil, nil
+	for b, want := range map[Button]control.Cmd{ButtonPlayPause: control.Pause, ButtonStop: control.Pause, ButtonNext: control.Next, ButtonPrev: control.Prev} {
+		before := p.Count()
 		g.r.press(b)
-		if len(p.got) != 1 || p.got[0] != want || p.from[0] != control.Headphones {
-			t.Fatalf("%s: плеер получил %v от %v, ждали %q из наушников", b, p.got, p.from, want)
+		done := p.Done()
+		if len(done) != before+1 || done[before] != (controltest.Done{Cmd: want, From: control.Headphones}) {
+			t.Fatalf("%s: плеер получил %v, ждали %q из наушников", b, done[before:], want)
 		}
 	}
 	if len(g.asked) != 0 || len(g.sent) != 0 {
@@ -63,9 +53,9 @@ func TestPlayerGetsTheButtonFirstAndPlatformStaysOut(t *testing.T) {
 	}
 }
 
-// Плеер движка отказался (играет Яндекс или ничего): всё как раньше. Пауза при музыке Яндекса — фразой, остальное — командой плееру платформы.
+// Плеер движка молчит (играет Яндекс или ничего): всё как раньше. Пауза при музыке Яндекса — фразой, остальное — командой плееру платформы.
 func TestPlatformGetsTheButtonWhenNoPlayerTakesIt(t *testing.T) {
-	g := newRouteRig(&routePlayer{})
+	g := newRouteRig(controltest.NewPlayer(control.State{}))
 	g.yandex = true
 	g.r.press(ButtonPlayPause)
 	g.r.press(ButtonStop)

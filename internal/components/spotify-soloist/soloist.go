@@ -28,6 +28,7 @@ import (
 	"sync"
 	"time"
 
+	playctl "openmediad/internal/core/control"
 	"openmediad/internal/core/engine"
 	"openmediad/internal/core/led"
 	"openmediad/internal/core/platform/disk"
@@ -37,16 +38,13 @@ import (
 	"openmediad/internal/libs/volmap"
 )
 
-// machine — то, что компонент берёт у автомата mediad: играет ли музыка Яндекса и как забрать у неё место.
+// machine — то, что компонент берёт у автомата mediad. Кто играет и как уступать звук Яндексу, решает ядро (core/control), поэтому здесь только
+// Spotify как плеер платформы (virtual.go) и подготовка к запуску очереди Яндекса после просьбы «включи <название>» (request.go).
 type machine interface {
-	Playing() bool
-	// TakeOver останавливает музыку Яндекса, оставляя платформе её плеер уже под Spotify (virtual.go автомата).
-	TakeOver() int
-	// ArmCarrier: ближайший запуск музыки Яндекса платформой (после быстрой команды) достаётся Spotify.
+	// ArmCarrier: ближайший запуск музыки Яндекса платформой достаётся Spotify.
 	ArmCarrier(d time.Duration)
-	// SetVirtual и OnVirtualCommand — Spotify как плеер платформы (virtual.go).
+	// SetVirtual — Spotify как плеер платформы (virtual.go).
 	SetVirtual(v *mediad.Virtual)
-	OnVirtualCommand(f func(cmd string))
 }
 
 // soloistNice — приоритет Soloist: демон работает с повышенным, а декодеру он ни к чему, голос Алисы важнее.
@@ -80,12 +78,10 @@ type Component struct {
 	expires string   // «client expires in N days» из журнала Soloist
 	yields  int      // сколько раз уступали звук другому источнику
 
-	owner        string    // кто последним начал играть: ownerSpotify | ownerYandex (voice.go)
-	voiceHandled int       // сколько фраз выполнено вместо Алисы
+	voiceHandled int       // сколько команд выполнено вместо Алисы (голос, кнопки)
 	voiceLast    string    // последнее выполненное действие
 	voiceAt      time.Time // и когда
-	voiceAct     action    // что выполнила последняя перехваченная фраза (для защиты от повтора директивой облака)
-	platformAt   time.Time // когда платформа последний раз сама адресовала команду плееру Spotify (buttons.go)
+	voiceAct     action    // что выполнила последняя перехваченная фраза-лайк (для защиты от повтора директивой облака)
 	likes        int       // сколько лайков поставлено или снято
 	likeHintAt   time.Time // когда в последний раз напоминали в журнале, что для лайков нужен вход
 	likeErr      string    // чем кончился последний лайк (пусто — удачно)
@@ -100,6 +96,10 @@ type Component struct {
 	swallow      func()                                // погасить ближайший ответ Алисы голосом (служба демона)
 
 	cancelFn func(context.Context) error // отмена диалога Алисы (в тестах подменяется)
+	phrases  *bookStore                  // слова и фразы голосовых просьб из phrases.txt (phrasebook.go)
+
+	startHintAt time.Time    // когда в последний раз напоминали, что запускать нечего
+	hub         *playctl.Hub // ядро: кто сейчас хозяин звука (nil — без ядра, тесты)
 }
 
 func newComponent(cfg Config, eng *engine.Engine, m machine, logf func(string, ...any), run string) *Component {
@@ -107,6 +107,7 @@ func newComponent(cfg Config, eng *engine.Engine, m machine, logf func(string, .
 	c.web = newWebAPI(c.p, func() string { return c.config().ClientID })
 	c.web.proxy = func() string { return c.config().WebProxy }
 	c.aliases = newAliasStore(c.p)
+	c.phrases = newBookStore(c.p.phrases(), logf)
 	return c
 }
 
@@ -121,6 +122,11 @@ func (c *Component) config() Config {
 func (c *Component) Start(ctx context.Context) error {
 	if c.eng == nil {
 		return fmt.Errorf("spotify-soloist: нет движка")
+	}
+	if created, err := c.phrases.ensure(); err != nil {
+		c.logf("файл фраз %s не создан: %v (работают встроенные)", c.p.phrases(), err)
+	} else if created {
+		c.logf("создан файл фраз для голосовых просьб: %s (правится руками, перечитывается сам)", c.p.phrases())
 	}
 	if miss := c.p.missing(); len(miss) > 0 {
 		c.mu.Lock()
@@ -159,7 +165,7 @@ func (c *Component) Start(ctx context.Context) error {
 	c.sup = &supervisor{start: c.startProc, probe: threadTicks, logf: c.logf, kick: make(chan struct{}, 1)}
 	c.cache = &cacheGuard{dir: c.p.cache(), maxMB: cfg.CacheMB, keepFreeMB: cfg.KeepFreeMB, freeKB: disk.FreeKB, logf: c.logf}
 
-	routines := []func(context.Context){c.ctl.run, c.sup.run, c.cache.run, c.arbiter}
+	routines := []func(context.Context){c.ctl.run, c.sup.run, c.cache.run}
 	if cfg.VolumeSync {
 		if m, err := openMaster(); err != nil {
 			c.logf("громкость колонки недоступна (%v): ползунок Spotify не связан с колонкой, громкость регулирует сам Soloist", err)
@@ -183,10 +189,6 @@ func (c *Component) Start(ctx context.Context) error {
 		}
 		c.virtualPush()
 	}
-	if c.mach != nil {
-		c.mach.OnVirtualCommand(c.onVirtualCommand)
-	}
-
 	ctx, c.cancel = context.WithCancel(ctx)
 	for _, f := range routines {
 		c.wg.Add(1)
@@ -324,47 +326,7 @@ func (c *Component) onSoloistLine(level, text string) {
 	}
 }
 
-// arbiter уступает звук: заиграл Spotify — музыка Яндекса на паузе; заиграл Яндекс — Spotify на паузе. Побеждает тот, кто
-// заиграл позже. Опрос раз в 250 мс: хватает, чтобы два потока не звучали вместе дольше доли секунды.
-func (c *Component) arbiter(ctx context.Context) {
-	if c.mach == nil {
-		return
-	}
-	t := time.NewTicker(250 * time.Millisecond)
-	defer t.Stop()
-	var prevS, prevY bool
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-t.C:
-		}
-		s, y := c.pcm.Playing(), c.mach.Playing()
-		if s && !prevS { // кто заиграл последним, тому и достаётся «продолжи» после паузы (voice.go); при одновременном старте побеждает Spotify
-			c.setOwner(ownerSpotify)
-		} else if y && !prevY {
-			c.setOwner(ownerYandex)
-		}
-		switch {
-		case s && !prevS:
-			// Яндекс играл — остановить; на паузе у платформы остался его плеер — отдать место Spotify (видно на дисплее)
-			if n := c.mach.TakeOver(); n > 0 {
-				c.noteYield()
-				c.logf("заиграл Spotify: музыка Яндекса (плееров: %d) остановлена", n)
-			}
-			y = false
-		case y && !prevY && s:
-			if err := c.ctl.Pause(); err != nil {
-				c.logf("заиграл Яндекс, но Spotify на паузу поставить не вышло: %v", err)
-			} else {
-				c.noteYield()
-				c.logf("заиграл Яндекс: Spotify поставлен на паузу")
-			}
-		}
-		prevS, prevY = s, y
-	}
-}
-
+// noteYield считает уступку звука: ядро (core/control, Run) уступает звук между Spotify и Яндексом и сообщает об этом через Yielded.
 func (c *Component) noteYield() {
 	c.mu.Lock()
 	c.yields++
@@ -402,6 +364,11 @@ func (c *Component) StatusLine() string {
 	}
 	if sup.Hangs > 0 {
 		parts = append(parts, fmt.Sprintf("зависаний: %d", sup.Hangs))
+	}
+	if cfg := c.config(); c.web != nil && (cfg.Like || cfg.PlayByName) { // клиент задан, а входа нет (например, после uninstall): лайки и поиск молча уходят в облако
+		if err := c.web.ready(); err != nil && err != errNoClientID {
+			parts = append(parts, "Web API: "+err.Error()+"; пока лайки и «включи <название>» не работают")
+		}
 	}
 	if yields > 0 {
 		parts = append(parts, fmt.Sprintf("уступал звук: %d", yields))

@@ -5,6 +5,7 @@ import (
 	"strings"
 	"time"
 
+	"openmediad/internal/core/control"
 	"openmediad/internal/core/journal"
 	"openmediad/internal/core/quasar/observe"
 )
@@ -83,6 +84,26 @@ func (d *daemon) phrase(req, text string, fast, logLines bool) {
 			gate.Clear() // ответ на эту фразу должен прозвучать, даже если прошлую перехватили секунду назад
 		}
 	}()
+	// «пауза», «дальше», «назад», «продолжи»: управление плеером ведёт ядро, оно знает, чей сейчас звук (Spotify, Яндекс или никто)
+	if cmd, ok := control.ParsePhrase(text); ok {
+		from := control.Voice
+		if fast {
+			from = control.FastVoice
+		}
+		if d.hub.Do(cmd, from) {
+			taken = true
+			if gate != nil && !fast { // ответ быстрой команды беззвучный и приходит через 30 мс: гасить в нём нечего
+				gate.Swallow()
+			}
+			var detail map[string]any
+			if logLines {
+				detail = map[string]any{"фраза": text}
+			}
+			d.j.Log(journal.Info, "aliced", "фраза выполнена ядром: управление плеером",
+				"Ядро отдало команду плееру движка; ответ облака голосом гасится, чтобы Алиса не отвечала поверх.", detail)
+			return
+		}
+	}
 	for _, t := range takers {
 		if !t.h.InterceptPhrase(req, text, fast) {
 			continue
@@ -127,6 +148,9 @@ func (d *daemon) reply(req string, directives []string) {
 
 // directive передаёт имя директивы ответа Алисы компонентам, которым это интересно.
 func (d *daemon) directive(name string) {
+	if cmd, ok := control.ParseDirective(name); ok { // облако поняло фразу как управление плеером: ядро решает, чей это звук
+		d.hub.Do(cmd, control.Cloud)
+	}
 	d.mu.Lock()
 	comps := d.comps
 	d.mu.Unlock()

@@ -19,6 +19,8 @@ import (
 //	<dir>/cache/             звуковой кэш (-C)
 //	<dir>/api.key            ключ Soloist, права 0600 (или key_file из настроек)
 //	<dir>/install.json       что и когда установлено
+//	<dir>/phrases.txt        слова и фразы для голосовых просьб (создаётся сам, правится руками)
+//	<dir>/aliases.json       свои названия «кино» → ссылка (openmediad spotify alias)
 const defaultSubdir = "spotify-soloist"
 
 type paths struct {
@@ -43,6 +45,7 @@ func (p paths) cache() string   { return filepath.Join(p.dir, "cache") }
 func (p paths) meta() string    { return filepath.Join(p.dir, "install.json") }
 func (p paths) sock() string    { return filepath.Join(p.run, "spotify-soloist.sock") }
 func (p paths) pid() string     { return filepath.Join(p.run, "spotify-soloist.pid") }
+func (p paths) phrases() string { return filepath.Join(p.dir, phraseFileName) }
 
 func (p paths) key() string {
 	if p.keyFile != "" {

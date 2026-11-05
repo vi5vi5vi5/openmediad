@@ -15,6 +15,7 @@
 | [`wsclient/`](wsclient/README.md) | клиент WebSocket | `spotify-soloist` |
 | [`resample/`](resample/README.md) | передискретизация PCM (44,1 → 48 кГц) | `spotify-soloist` |
 | [`ringled/`](ringled/README.md) | кольцо подсветки логотипа Мини 3 (`/dev/fb0`) и хранитель кадра | `led-ring` |
+| [`clockled/`](clockled/README.md) | дисплей с часами Мини 3 (32 сегмента в sysfs), анимации прошивки `.binscled.zst` и проигрыватель с возвратом времени | `led-ring` |
 | [`volmap/`](volmap/README.md) | таблица громкости платформы: уровень 0–20 ↔ Master | `bt-out`, `spotify-soloist` |
 | [`debpkg/`](debpkg/README.md) | файлы из пакета .deb (ar + xz) | `spotify-soloist` |
 

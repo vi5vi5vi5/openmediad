@@ -323,6 +323,37 @@ func (m *Machine) virtualCommand(c msg.AudioCommand) bool {
 	return true
 }
 
+// heldBySpotify — сессия платформы сейчас занята под Spotify (плеер Яндекса подменён, а не заиграл настоящий).
+func (m *Machine) heldBySpotify() bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.vp != nil && m.vp.adopted && m.vp.st != stEnded
+}
+
+// takePrefetched забывает заранее открытые треки очереди Яндекса (m.mu занят) и возвращает их id: закрыть их надо уже без блокировки. Сессию платформы
+// заняла музыка, которую ведёт не автомат, и до этих треков очередь не дойдёт, а каждый держит скачивание, процесс-декодер и буфер.
+func (m *Machine) takePrefetched() (ids []string) {
+	for id, in := range m.players {
+		if in.st != stNew {
+			continue
+		}
+		in.t.stop()
+		in.st = stEnded
+		delete(m.players, id)
+		if m.byTrack[in.meta.Player.Stream] == id {
+			delete(m.byTrack, in.meta.Player.Stream)
+		}
+		ids = append(ids, id)
+	}
+	return ids
+}
+
+func (m *Machine) closeAll(ids []string) {
+	for _, id := range ids {
+		go m.Back.Close(id)
+	}
+}
+
 // ArmCarrier готовит автомат к тому, что платформа сама запустит музыку Яндекса, хотя Spotify уже выполнил команду («дальше», «назад»,
 // «играй» без «Алиса»: платформа ставит audio_play очереди Яндекса). В течение d первый такой запуск (play) не играется: плеер платформы
 // занимает Spotify, а предзагрузка (prefetch) молча принимается.
@@ -348,11 +379,13 @@ func (m *Machine) adoptCommand(k msg.CommandKind, c msg.AudioCommand) bool {
 	m.mu.Lock()
 	m.init()
 	m.carrierUntil = time.Time{}
+	stale := m.takePrefetched()
 	meta := MetaFrom(c, false)
 	vp := m.vp
 	if vp == nil || vp.st == stEnded {
 		m.carrier = &meta // Spotify ещё не прислал состояние: плеер достанется ему при первом SetVirtual
 		m.mu.Unlock()
+		m.closeAll(stale)
 		m.note("carrier", p.ID, "плеер платформы ждёт Spotify")
 		m.logf("плеер платформы %s занят под Spotify (ждёт состояния)", p.ID)
 		return true
@@ -371,6 +404,7 @@ func (m *Machine) adoptCommand(k msg.CommandKind, c msg.AudioCommand) bool {
 		evs = append(evs, m.vevent(vp, 1, 4, pos))
 	}
 	m.mu.Unlock()
+	m.closeAll(stale)
 	m.note("carrier", p.ID, "запуск Яндекса заменён Spotify")
 	m.logf("запуск Яндекса %s не играется: плеер платформы теперь Spotify", p.ID)
 	for _, e := range evs {
@@ -438,8 +472,10 @@ func (m *Machine) TakeOver() int {
 		m.carrier = &meta
 	}
 	m.note("takeover", id, "плеер Яндекса отдан Spotify")
+	stale := m.takePrefetched()
 	m.mu.Unlock()
 	go m.Back.Close(id)
+	m.closeAll(stale)
 	m.logf("плеер Яндекса %s отдан Spotify", id)
 	for _, e := range evs {
 		m.Emit(e)
