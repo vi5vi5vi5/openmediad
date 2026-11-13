@@ -117,7 +117,7 @@ func TestEachEventHasItsOwnAnimation(t *testing.T) {
 		{control.Prev, full(led.Color{R: 0x30, G: 0x30, B: 0x30})},
 	} {
 		g := startedFx(t, nil)
-		g.c.onEvent(control.Event{Cmd: tc.cmd, From: control.Headphones, Player: "spotify"})
+		g.c.onEvent(control.Mark(control.Event{Cmd: tc.cmd, From: control.Headphones, Player: "spotify"}))
 		waitFrame(t, g.ring, tc.want)
 	}
 }
@@ -125,7 +125,7 @@ func TestEachEventHasItsOwnAnimation(t *testing.T) {
 // Паузу из приложения ядро объявляет с источником App, и анимация играет так же.
 func TestEventFromTheAppPlaysToo(t *testing.T) {
 	g := startedFx(t, nil)
-	g.c.onEvent(control.Event{Cmd: control.Pause, From: control.App, Player: "spotify"})
+	g.c.onEvent(control.Mark(control.Event{Cmd: control.Pause, From: control.App, Player: "spotify"}))
 	waitFrame(t, g.ring, full(led.Color{R: 255}))
 }
 
@@ -133,7 +133,7 @@ func TestEventFromTheAppPlaysToo(t *testing.T) {
 func TestNothingIsDrawnWhereThePlatformDrawsItself(t *testing.T) {
 	g := startedFx(t, nil)
 	for _, o := range []control.Origin{control.FastVoice, control.Cloud, control.Virtual} {
-		g.c.onEvent(control.Event{Cmd: control.Pause, From: o, Player: "spotify"})
+		g.c.onEvent(control.Mark(control.Event{Cmd: control.Pause, From: o, Player: "spotify"}))
 	}
 	time.Sleep(250 * time.Millisecond)
 	g.ring.mu.Lock()
@@ -155,7 +155,7 @@ func TestAnimationsCanBeSwitchedOff(t *testing.T) {
 
 func TestAnimationBrightness(t *testing.T) {
 	g := startedFx(t, func(c *Config) { c.AnimationBrightness = 128 })
-	g.c.onEvent(control.Event{Cmd: control.Pause, From: control.Headphones, Player: "spotify"})
+	g.c.onEvent(control.Mark(control.Event{Cmd: control.Pause, From: control.Headphones, Player: "spotify"}))
 	for end := time.Now().Add(2 * time.Second); time.Now().Before(end); time.Sleep(5 * time.Millisecond) {
 		if f := g.ring.frame(); f[0].R >= 127 && f[0].R <= 129 && f[0].G == 0 {
 			return
@@ -179,7 +179,7 @@ func TestAnimationPlaysOverTheFlashAndTheFlashContinues(t *testing.T) {
 func TestAnimationWaitsForTheRingFromTheFirmware(t *testing.T) {
 	g := startedFx(t, nil)
 	g.busy.Store(true)
-	g.c.onEvent(control.Event{Cmd: control.Next, From: control.Speaker, Player: "spotify"})
+	g.c.onEvent(control.Mark(control.Event{Cmd: control.Next, From: control.Speaker, Player: "spotify"}))
 	time.Sleep(200 * time.Millisecond)
 	if g.ring.frame() != (ringled.Frame{}) {
 		t.Fatalf("рисуем поверх анимации прошивки: %+v", g.ring.frame())
@@ -205,7 +205,7 @@ func TestMissingFirmwareFilesAreNotFatal(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer c.Stop()
-	c.onEvent(control.Event{Cmd: control.Pause, From: control.Headphones, Player: "spotify"})
+	c.onEvent(control.Mark(control.Event{Cmd: control.Pause, From: control.Headphones, Player: "spotify"}))
 	time.Sleep(100 * time.Millisecond)
 	if ring.frame() != (ringled.Frame{}) {
 		t.Fatal("нарисовали анимацию без файла")
@@ -232,7 +232,7 @@ func TestAnimationSettingsValidate(t *testing.T) {
 func TestAnimationWaitsLongerThanOneAndAHalfSeconds(t *testing.T) {
 	g := startedFx(t, nil)
 	g.busy.Store(true)
-	g.c.onEvent(control.Event{Cmd: control.Next, From: control.Voice, Player: "spotify"})
+	g.c.onEvent(control.Mark(control.Event{Cmd: control.Next, From: control.Voice, Player: "spotify"}))
 	time.Sleep(1700 * time.Millisecond)
 	if g.ring.frame() != (ringled.Frame{}) {
 		t.Fatalf("рисуем поверх анимации прошивки: %+v", g.ring.frame())
@@ -249,7 +249,7 @@ func TestAnimationIsDroppedIfTheRingNeverFreesUp(t *testing.T) {
 	maxEffectWait = 200 * time.Millisecond
 	g := startedFx(t, nil)
 	g.busy.Store(true)
-	g.c.onEvent(control.Event{Cmd: control.Pause, From: control.Voice, Player: "spotify"})
+	g.c.onEvent(control.Mark(control.Event{Cmd: control.Pause, From: control.Voice, Player: "spotify"}))
 	time.Sleep(500 * time.Millisecond)
 	g.busy.Store(false)
 	time.Sleep(300 * time.Millisecond)
@@ -269,8 +269,8 @@ func TestAnimationIsDroppedIfTheRingNeverFreesUp(t *testing.T) {
 // Для разбора «почему не загорелось»: решения по анимациям и последние события хранителя видны в состоянии.
 func TestDebugStateShowsWhatHappenedToTheRing(t *testing.T) {
 	g := startedFx(t, nil)
-	g.c.onEvent(control.Event{Cmd: control.Pause, From: control.Headphones, Player: "spotify"})
-	g.c.onEvent(control.Event{Cmd: control.Pause, From: control.FastVoice, Player: "spotify"})
+	g.c.onEvent(control.Mark(control.Event{Cmd: control.Pause, From: control.Headphones, Player: "spotify"}))
+	g.c.onEvent(control.Mark(control.Event{Cmd: control.Pause, From: control.FastVoice, Player: "spotify"}))
 	waitFrame(t, g.ring, full(led.Color{R: 255}))
 	var st map[string]any
 	var log string

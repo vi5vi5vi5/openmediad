@@ -85,7 +85,6 @@ openmediad/
 │   │   ├── bluez/               BlueZ и BlueALSA: устройства, спаривание     → bt-out, bt-in, bt-command
 │   │   ├── bt-command/          команда терминала `openmediad bt`            → приходит с bt-out или bt-in
 │   │   ├── alsactl/             регулятор громкости ALSA и статус PCM        → bt-out, devtools
-│   │   ├── aliced-client/       клиент aliced: пауза / «дальше» / запрос Алисе → bt-out
 │   │   ├── pcmstream/           звук от чужого процесса как источник движка  → spotify-soloist (и будущие движки Spotify)
 │   │   ├── ringled/             кольцо подсветки логотипа (/dev/fb0) и хранитель кадра → led-ring
 │   │   ├── clockled/            дисплей с часами (sysfs), анимации прошивки .binscled.zst, проигрыватель → led-ring
@@ -103,7 +102,7 @@ openmediad/
 │   └── celtcheck/               отдельный модуль: сверка декодера Opus
 ├── scripts/dev/                 скрипты для живой колонки и симулятор колонки
 ├── testdata/                    обезличенные записи трафика для золотых тестов
-└── docs/                        MAP.md (эта карта), COMPONENTS.md, ARCHITECTURE.md, PLAYERS.md (как написать плеер), INSTALL.md, BUS-PROTOCOL.md, research/
+└── docs/                        MAP.md (эта карта), COMPONENTS.md, ARCHITECTURE.md, API.md (как добавить свою функцию), PLAYERS.md (как написать плеер), INSTALL.md, BUS-PROTOCOL.md, research/
 ```
 
 ---
@@ -131,9 +130,12 @@ openmediad/
 | строка в `status` | компонент реализует `StatusLine() string` |
 | директивы Алисы | компонент реализует `OnDirective(name string)`: демон отдаёт ему имена всех директив, смысл знает компонент |
 | ответ облака целиком | компонент реализует `OnReply(reqID, directives []string)`: по директивам видно, как облако поняло запрос (музыка или нет) |
-| фразы пользователя | компонент реализует `InterceptPhrase(reqID, text) bool`: демон отдаёт окончательную фразу раньше ответа облака; `true` — фраза выполнена компонентом, ответ облака голосом гасится |
+| фразы пользователя | компонент реализует `InterceptPhrase(reqID, text string, fast bool) bool`: демон отдаёт окончательную фразу раньше ответа облака; `true` — фраза выполнена компонентом, ответ облака голосом гасится |
 | пробный выход | `command.RegisterTestOutput(имя, ...)` — `openmediad test-sound ИМЯ` |
 | состояние для отладки | `DebugState() any` — показывается в `status -v` и на отладочной странице по имени компонента |
+| диалог с Алисой | компонент реализует `OnFocus(on bool)`: диалог начался или кончился (музыку ядро приглушает само) |
+| команды плееру | источник команд зовёт `Hub.Command(команда, откуда)` (служба `"control"`); плеер реализует `Accepts/State/Do` |
+| своя программа снаружи | сокет команд демона: `openmediad player`, `events`, `ask` — [API.md](API.md) |
 
 ---
 
@@ -229,9 +231,10 @@ Go-декодер — ≈3 МБ и ≈25 мс на секунду звука (HI
 | команды терминала | `core/cli/<команда>.go`, порядок — `core/cli/commands.go`; команду компонента — `command.Register` в его пакете |
 | как ставится на колонку / откат | `core/platform/install/*`, `core/platform/initd/{guard.sh,initd.sh}` |
 | спектр на дисплее | `core/spectrum`, `core/engine/spectrum.go`, `components/display-spectrum` |
-| громкость и приглушение | `core/audio/gain.go`, `core/engine`, `[focus]`; наушники — `components/bt-out/{volume,hold}.go` |
+| громкость и приглушение | `core/audio/gain.go`, `core/engine`, `[focus]` (приглушение ведёт ядро: `daemon/app.go`, `Machine.MusicGain`); наушники — `components/bt-out/{volume,hold}.go`; громкость ответов Алисы — `components/alice-voice/answervol.go` |
+| команды плееру и события | `core/control` (`hub.go`, `visuals.go`), пульт платформы — `daemon/remote.go`, сокет — `daemon/api.go` |
 | отладочная страница | `components/debug-page/{page.html,server.go}` |
-| убрать Bluetooth совсем | удалить `components/bt-out`, `components/bt-in`, `libs/{bluez,dbus,bt-command,aliced-client}`, их `include_*.go` и записи в каталоге; больше нигде Bluetooth не упоминается |
+| убрать Bluetooth совсем | удалить `components/bt-out`, `components/bt-in`, `libs/{bluez,dbus,bt-command}`, их `include_*.go` и записи в каталоге; больше нигде Bluetooth не упоминается |
 
 ---
 
@@ -247,7 +250,7 @@ Go-декодер — ≈3 МБ и ≈25 мс на секунду звука (HI
 | `internal/sink/speaker`, `internal/sink/alsa` | `internal/core/speaker`, `internal/core/speaker/aplay` (`arecord.go` → `components/bt-in/recorder.go`) |
 | `internal/quasar/{pb,wire,msg,shim,mediad,explain,observe}` | `internal/core/quasar/…` |
 | `internal/quasar/iohub` | `internal/components/display-spectrum` |
-| `internal/quasar/control` | `internal/libs/aliced-client` |
+| `internal/quasar/control` | `internal/core/quasar/alicedclient` (до 11.11.2026 — `internal/libs/aliced-client`) |
 | `internal/quasar/capture` | `internal/devtools/capture` |
 | `internal/system/{layout,device,stock,iptables,proc,disk,clock,install,initd}` | `internal/core/platform/…` |
 | `internal/system/{alsactl,dbus,bluez}` | `internal/libs/{alsactl,dbus,bluez}` |

@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"sync"
+	"time"
 
 	"openmediad/internal/core/audio"
 	"openmediad/internal/core/led"
@@ -43,4 +44,12 @@ type indicatedOutput struct {
 }
 
 func (o *indicatedOutput) Drain() { o.Output.Drain(); o.release() }
+
+// Tail — хвост настоящего вывода (audio.Tailer): обёртка его не скрывает.
+func (o *indicatedOutput) Tail() time.Duration {
+	if t, ok := o.Output.(audio.Tailer); ok {
+		return t.Tail()
+	}
+	return 0
+}
 func (o *indicatedOutput) Abort() { o.Output.Abort(); o.release() }

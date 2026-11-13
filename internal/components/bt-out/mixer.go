@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"openmediad/internal/core/audio"
@@ -38,7 +39,12 @@ type mixer struct {
 	ins  []*mixInput
 	err  error
 	done chan struct{}
+
+	tail atomic.Int64 // сколько звук идёт от смесителя до ушей, нс (setTail)
 }
+
+// setTail задаёт хвост вывода: сколько после того, как смеситель забрал звук потока, он ещё звучит в наушниках.
+func (m *mixer) setTail(d time.Duration) { m.tail.Store(int64(d)) }
 
 // startMixer открывает вывод в наушники (48 кГц стерео) и начинает писать в него: звук потоков или тишину.
 func startMixer(open func() (audio.Output, error)) (*mixer, error) {
@@ -217,6 +223,10 @@ func (in *mixInput) Drain() {
 		m.cond.Wait()
 	}
 }
+
+// Tail — сколько звук потока ещё звучит после Drain (audio.Tailer): смеситель его уже забрал, но он идёт через трубу и буфер
+// aplay, кодек и сами наушники. Движок ждёт это время, прежде чем объявить ответ Алисы законченным.
+func (in *mixInput) Tail() time.Duration { return time.Duration(in.m.tail.Load()) }
 
 // Abort убирает поток сразу: недоигранный остаток выбрасывается.
 func (in *mixInput) Abort() {

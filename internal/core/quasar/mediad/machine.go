@@ -40,6 +40,13 @@ type Machine struct {
 
 	// Duck — громкость музыки, пока у диалога аудиофокус; 0 — DuckGain. На ходу меняется только через SetDuck.
 	Duck float64
+	// MusicGain (необязательный) задаёт громкость всей музыки движка: 1 — как есть, меньше — приглушение на время диалога.
+	// Его ставит демон (класс «музыка» движка), поэтому приглушается любой источник музыки — Яндекс, Spotify, свой компонент, —
+	// а не только тот, что подключён как Back. Вызывается без блокировок машины.
+	MusicGain func(gain float64)
+	// OnFocus (необязательный) сообщает о начале (true) и конце (false) диалога с Алисой: платформа забрала или отдала аудиофокус.
+	// Вызывается без блокировок машины, после смены громкости музыки.
+	OnFocus func(on bool)
 
 	// Voice (необязательный) включает перехват голоса Алисы: voice-start, voice-chunk, voice-eos и release голосового плеера.
 	// nil — голос идёт настоящему mediad.
@@ -85,8 +92,15 @@ func (m *Machine) SetDuck(g float64) {
 	m.Duck = g
 	ducked := m.ducked
 	m.mu.Unlock()
-	if ducked && m.Back != nil {
-		m.Back.Duck(m.gain())
+	if ducked {
+		m.setMusicGain(m.gain())
+	}
+}
+
+// setMusicGain передаёт громкость музыки движку. Вызывать без m.mu.
+func (m *Machine) setMusicGain(g float64) {
+	if m.MusicGain != nil {
+		m.MusicGain(g)
 	}
 }
 
@@ -216,7 +230,10 @@ func (m *Machine) Focus(on bool) {
 		g = m.duckGain()
 	}
 	m.mu.Unlock()
-	m.Back.Duck(g)
+	m.setMusicGain(g)
+	if m.OnFocus != nil {
+		m.OnFocus(on)
+	}
 	for _, in := range playing {
 		id := in.meta.Player.ID
 		m.schedule(&in.t, nil, 300*time.Millisecond, func() { m.flagEvent(id) })

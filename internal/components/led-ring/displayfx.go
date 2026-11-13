@@ -19,19 +19,8 @@ var clockAnimNames = map[control.Cmd]string{
 	control.Prev:  clockled.AnimPrevious,
 }
 
-// platformDrawsDisplay — прошивка рисует эту анимацию на дисплее сама. Ответ на короткую команду и директива облака приходят с анимацией
-// (draw_animation_directive), команду усыновлённому плееру платформа выполняет как команду своего. Пауза кнопкой колонки тоже локальна, и анимация
-// приходит сразу. А пауза фразой с «Алисой» — нет: диалог мы отменяем, и ответа с анимацией не будет (по журналу платформы там только «Алиса слушает»
-// и «думает»). Перемотку кнопкой колонки и фразой платформа отправляет облаку, и в ответе (audio_play) анимации нет: её рисуем мы.
-func platformDrawsDisplay(cmd control.Cmd, from control.Origin) bool {
-	switch from {
-	case control.FastVoice, control.Cloud, control.Virtual:
-		return true
-	case control.Speaker:
-		return cmd == control.Pause
-	}
-	return false
-}
+// Рисует ли прошивка анимацию сама, решает ядро: событие приходит с отметкой Event.PlatformDisplay (правила — core/control/visuals.go).
+// Компонент рисует только там, где прошивка промолчит: кнопки наушников, приложение Spotify, перемотка кнопкой колонки и фразой.
 
 // maxDisplayWait — сколько ждём, пока прошивка освободит дисплей (спектр музыки, «Алиса думает»), прежде чем отказаться от анимации: не вовремя она не нужна.
 var maxDisplayWait = 3 * time.Second
@@ -78,7 +67,7 @@ func (c *Component) displayEvent(e control.Event, what string) {
 	case pl == nil:
 		c.mu.Unlock()
 		return
-	case platformDrawsDisplay(e.Cmd, e.From):
+	case e.PlatformDisplay:
 		c.note("%s: дисплей: пропущено, анимацию рисует прошивка", what)
 		c.mu.Unlock()
 		return

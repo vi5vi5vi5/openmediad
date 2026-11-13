@@ -21,12 +21,6 @@ var effectNames = map[control.Cmd]string{
 	control.Prev:   ringled.PatternPrevious,
 }
 
-// platformDraws — источники, при которых прошивка рисует свою анимацию сама: короткая команда платформы отвечает локальным сценарием с анимацией,
-// ответ облака приносит её директивой, а команду усыновлённому плееру платформа выполняет как команду своего. Второй раз поверх рисовать незачем.
-func platformDraws(o control.Origin) bool {
-	return o == control.FastVoice || o == control.Cloud || o == control.Virtual
-}
-
 // maxEffectWait — сколько ждём кольцо у прошивки (после фразы или жеста Алиса слушает, думает, отвечает), прежде чем отказаться от анимации:
 // показывать её уже не вовремя.
 var maxEffectWait = 5 * time.Second
@@ -93,7 +87,7 @@ func (c *Component) ringEvent(e control.Event, what string) {
 	}
 	now := time.Now()
 	c.mu.Lock()
-	if platformDraws(e.From) {
+	if e.PlatformRing { // прошивка нарисует сама (правила — core/control/visuals.go): второй раз поверх незачем
 		c.note("%s: кольцо: пропущено, анимацию рисует прошивка", what)
 		c.mu.Unlock()
 		return

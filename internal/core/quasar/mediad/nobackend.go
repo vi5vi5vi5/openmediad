@@ -1,7 +1,8 @@
 package mediad
 
 // NoBackend — Backend, который ничего не играет: подставляется, когда компонент музыки выключен или не вошёл в сборку
-// (тогда Machine.NoMusic = true и команды музыки идут штатному mediad; автомату остаётся только следить за фокусом).
+// (тогда Machine.NoMusic = true и команды музыки идут штатному mediad; автомату остаётся только следить за фокусом:
+// приглушение музыки на время диалога от бэкенда не зависит, его ведёт ядро через Machine.MusicGain).
 type NoBackend struct{}
 
 func (NoBackend) Open(string, Track, uint64)   {}
@@ -10,6 +11,5 @@ func (NoBackend) Start(string)                 {}
 func (NoBackend) Pause(string)                 {}
 func (NoBackend) Close(string)                 {}
 func (NoBackend) Seek(string, uint64)          {}
-func (NoBackend) Duck(float64)                 {}
 func (NoBackend) Pos(string) uint64            { return 0 }
 func (NoBackend) Net(string) (uint64, uint64)  { return 0, 0 }

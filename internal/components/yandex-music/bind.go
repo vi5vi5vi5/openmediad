@@ -198,9 +198,6 @@ func (b *Backend) Seek(id string, posMs uint64) {
 	}
 }
 
-// Duck задаёт громкость музыки (1 — как есть; меньше — приглушение на время диалога).
-func (b *Backend) Duck(g float64) { b.Engine.SetClassGain(engine.Music, g) }
-
 // Pos — позиция воспроизведения, мс.
 func (b *Backend) Pos(id string) uint64 {
 	if p := b.get(id); p != nil {

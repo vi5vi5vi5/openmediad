@@ -25,6 +25,8 @@ func (d *daemon) intercept(c *shim.Conn, frame []byte) bool {
 	eaten := d.m.Handle(c, cmd)
 	if eaten {
 		d.j.Add(explain.Intercepted(c.ID, cmd))
+	} else if d.stock != nil {
+		d.stock.passed(cmd)
 	}
 	return eaten
 }
@@ -34,6 +36,9 @@ func (d *daemon) intercept(c *shim.Conn, frame []byte) bool {
 func (d *daemon) tap(c *shim.Conn, dir shim.Dir, frame []byte, _ time.Duration) {
 	if dir == shim.ToClient && d.dup.seen(frame) {
 		return
+	}
+	if dir == shim.ToClient && d.stock != nil {
+		d.stock.fromStock(frame)
 	}
 	e, ok := explain.DescribeFrame(dir == shim.ToService, frame)
 	if !ok || journal.Rank(e.Lvl) < journal.Rank(d.j.Level()) {

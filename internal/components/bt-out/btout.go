@@ -69,6 +69,9 @@ type Sink struct {
 	// (режим speaker), а голос Алисы на динамиках звучит, как до подключения. Отключились — уровень платформы
 	// возвращается к уровню динамиков.
 	HoldSpeaker bool
+	// Latency — сколько звук идёт от движка до ушей (труба и буфер aplay, кодек, наушники); 0 — оценить самим (outputTail).
+	// На это время откладывается «ответ Алисы закончен».
+	Latency time.Duration
 	// PlatformLevel (необязательный) — поставить уровень громкости платформы (0–20), как голосом: им после отключения
 	// наушников уровень возвращается к динамикам.
 	PlatformLevel func(level int) error
@@ -163,6 +166,7 @@ type target struct {
 	pcm      dbus.ObjectPath
 	rate     uint32
 	channels byte
+	delay    time.Duration // задержка PCM по сведениям BlueALSA (0 — неизвестна)
 }
 
 // Name — имя выхода в маршрутах настроек.
@@ -391,7 +395,8 @@ func (s *Sink) refresh(ctx context.Context, c Client) error {
 		s.releaseSpeaker()
 		return nil
 	}
-	t := &target{addr: p.Address, dev: p.Device, pcm: p.Path, rate: p.Sampling, channels: p.Channels}
+	t := &target{addr: p.Address, dev: p.Device, pcm: p.Path, rate: p.Sampling, channels: p.Channels,
+		delay: time.Duration(p.Delay) * 100 * time.Microsecond}
 	if d, ok := st.Device(p.Address); ok {
 		t.name, t.names = d.Label(), []string{d.Name, d.Alias}
 	}
@@ -405,6 +410,11 @@ func (s *Sink) refresh(ctx context.Context, c Client) error {
 			s.note("%v", err)
 		}
 	}
+	s.mu.Lock()
+	if s.mix != nil {
+		s.mix.setTail(s.outputTail(t))
+	}
+	s.mu.Unlock()
 	s.ensureButtons(t)
 	if fresh {
 		s.mu.Lock()
@@ -415,6 +425,27 @@ func (s *Sink) refresh(ctx context.Context, c Client) error {
 		}
 	}
 	return nil
+}
+
+// Хвост вывода в наушники: что стоит между смесителем и ушами. Труба и буфер aplay известны точно; задержку кодека и самих
+// наушников сообщает BlueALSA (свойство Delay), а если не сообщает или сообщает неправдоподобное — берётся типичная.
+const (
+	typicalHeadphoneDelay = 200 * time.Millisecond
+	minHeadphoneDelay     = 50 * time.Millisecond
+	maxHeadphoneDelay     = time.Second
+)
+
+// outputTail — сколько звук идёт от смесителя до ушей в наушниках t.
+func (s *Sink) outputTail(t *target) time.Duration {
+	if s.Latency > 0 {
+		return s.Latency
+	}
+	d := t.delay
+	if d < minHeadphoneDelay || d > maxHeadphoneDelay {
+		d = typicalHeadphoneDelay
+	}
+	pipe := time.Duration(mixPipe) * time.Second / (48000 * 4)
+	return pipe + mixBufferUS*time.Microsecond + d
 }
 
 func (s *Sink) mixerAlive() bool {

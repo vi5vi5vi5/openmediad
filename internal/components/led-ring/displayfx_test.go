@@ -170,7 +170,7 @@ func TestSkipsShowTheirOwnAnimations(t *testing.T) {
 		{control.Pause, control.App, segs(map[string]uint8{"B1": 0xf0, "E2": 0xf0})},
 	} {
 		g := startedDisplay(t, nil)
-		g.c.onEvent(control.Event{Cmd: tc.cmd, From: tc.from, Player: "spotify"})
+		g.c.onEvent(control.Mark(control.Event{Cmd: tc.cmd, From: tc.from, Player: "spotify"}))
 		waitClock(t, g.clock, tc.want)
 	}
 }
@@ -185,7 +185,7 @@ func TestDisplayIsLeftAloneWhereThePlatformDraws(t *testing.T) {
 		{Cmd: control.Resume, From: control.Headphones}, {Cmd: control.Resume, From: control.App},
 	} {
 		e.Player = "spotify"
-		g.c.onEvent(e)
+		g.c.onEvent(control.Mark(e))
 	}
 	time.Sleep(250 * time.Millisecond)
 	if g.clock.nwrites() != 0 {
@@ -203,7 +203,7 @@ func TestDisplayIsLeftAloneWhereThePlatformDraws(t *testing.T) {
 func TestDisplayWaitsUntilTheFirmwareIsDone(t *testing.T) {
 	g := startedDisplay(t, nil)
 	g.busy.Store(true)
-	g.c.onEvent(control.Event{Cmd: control.Next, From: control.Headphones, Player: "spotify"})
+	g.c.onEvent(control.Mark(control.Event{Cmd: control.Next, From: control.Headphones, Player: "spotify"}))
 	time.Sleep(150 * time.Millisecond)
 	if g.clock.nwrites() != 0 {
 		t.Fatal("рисуем поверх спектра")
@@ -218,7 +218,7 @@ func TestDisplayAnimationIsDroppedIfTheDisplayStaysBusy(t *testing.T) {
 	maxDisplayWait = 150 * time.Millisecond
 	g := startedDisplay(t, nil)
 	g.busy.Store(true)
-	g.c.onEvent(control.Event{Cmd: control.Pause, From: control.Headphones, Player: "spotify"})
+	g.c.onEvent(control.Mark(control.Event{Cmd: control.Pause, From: control.Headphones, Player: "spotify"}))
 	time.Sleep(400 * time.Millisecond)
 	g.busy.Store(false)
 	time.Sleep(200 * time.Millisecond)
@@ -241,7 +241,7 @@ func TestDisplayAnimationsCanBeSwitchedOff(t *testing.T) {
 
 func TestDisplayAnimationBrightness(t *testing.T) {
 	g := startedDisplay(t, func(c *Config) { c.AnimationBrightness = 128 })
-	g.c.onEvent(control.Event{Cmd: control.Next, From: control.Headphones, Player: "spotify"})
+	g.c.onEvent(control.Mark(control.Event{Cmd: control.Next, From: control.Headphones, Player: "spotify"}))
 	i, _ := clockled.Index("E2")
 	for end := time.Now().Add(2 * time.Second); time.Now().Before(end); time.Sleep(3 * time.Millisecond) {
 		if v := g.clock.frame()[i]; v >= 111 && v <= 114 { // 0xe0 · 128 / 255
@@ -266,7 +266,7 @@ func TestMissingDisplayFilesAreNotFatal(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer c.Stop()
-	c.onEvent(control.Event{Cmd: control.Pause, From: control.Headphones, Player: "spotify"})
+	c.onEvent(control.Mark(control.Event{Cmd: control.Pause, From: control.Headphones, Player: "spotify"}))
 	time.Sleep(100 * time.Millisecond)
 	if g.clock.nwrites() != 0 || atomic.LoadInt32(&logged) == 0 {
 		t.Fatalf("записей %d, сообщений в журнал %d", g.clock.nwrites(), atomic.LoadInt32(&logged))
@@ -287,7 +287,7 @@ func TestDisplayWorksWithoutTheRingAndStopRestoresTheTime(t *testing.T) {
 	if err := c.Start(ctx); err != nil {
 		t.Fatal(err)
 	}
-	c.onEvent(control.Event{Cmd: control.Next, From: control.Headphones, Player: "spotify"})
+	c.onEvent(control.Mark(control.Event{Cmd: control.Next, From: control.Headphones, Player: "spotify"}))
 	waitClock(t, g.clock, segs(map[string]uint8{"E2": 0xe0}))
 	c.Stop()
 	if g.clock.frame() != clockTime {

@@ -89,7 +89,9 @@ func TestScenarioMatrix(t *testing.T) {
 					if got := r.p.did; len(got) != 1 || got[0] != want || r.p.froms[0] != from {
 						t.Fatalf("плееру велели %v от %v, ждали %q от %v", r.p.did, r.p.froms, want, from)
 					}
-					if len(events) != 1 || events[0] != (Event{Cmd: want, From: from, Player: "spotify"}) {
+					wantEvent := Event{Cmd: want, From: from, Player: "spotify"}
+					wantEvent.PlatformDisplay, wantEvent.PlatformRing = platformDisplay(wantEvent), platformRing(wantEvent) // сами правила — в command_test.go
+					if len(events) != 1 || events[0] != wantEvent {
 						t.Fatalf("события %+v", events)
 					}
 					// очередь Яндекса готовят, только когда платформа ответит на действие запросом облаку: кнопка колонки, голос, короткая команда

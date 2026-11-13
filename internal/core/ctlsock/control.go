@@ -29,11 +29,13 @@ func SocketPath() string { return filepath.Join(RunDir(), "ctl.sock") }
 
 // Request — команда демону.
 type Request struct {
-	Cmd    string `json:"cmd"`              // status | logs | follow | reload
+	Cmd    string `json:"cmd"`              // status | logs | follow | reload | control | players | events | ask (последние четыре — api.go)
 	Since  uint64 `json:"since,omitempty"`  // logs, follow: записи после этой
 	Limit  int    `json:"limit,omitempty"`  // logs: не больше стольких последних
 	Level  string `json:"level,omitempty"`  // logs, follow: не ниже этого уровня
 	Detail bool   `json:"detail,omitempty"` // status: с плеерами и треками
+	Action string `json:"action,omitempty"` // control: pause | resume | toggle | next | prev
+	Text   string `json:"text,omitempty"`   // ask: фраза Алисе
 }
 
 // Response — ответ демона (одна строка).

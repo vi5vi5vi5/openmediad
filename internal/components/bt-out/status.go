@@ -3,6 +3,7 @@ package btout
 import (
 	"fmt"
 	"strings"
+	"time"
 )
 
 // State — снимок для status и отладочной страницы.
@@ -18,6 +19,7 @@ type State struct {
 	Streams   int    `json:"streams"`         // сколько потоков движка звучит в наушниках
 	Hidden    int    `json:"hidden_platform"` // сколько транспортов наушников скрыто от платформы
 	Buttons   bool   `json:"buttons"`         // кнопки наушников читаются
+	TailMs    int64  `json:"tail_ms"`         // сколько звук идёт до ушей: на столько откладывается «ответ закончен»
 }
 
 // StatusLine — строка о наушниках для `openmediad status`.
@@ -54,7 +56,7 @@ func (s *Sink) DebugState() any {
 	m := s.mix
 	s.mu.Unlock()
 	if m != nil && m.Err() == nil {
-		st.Channel, st.Streams = true, m.Streams()
+		st.Channel, st.Streams, st.TailMs = true, m.Streams(), m.tail.Load()/int64(time.Millisecond)
 	}
 	if t := s.cur.Load(); t != nil {
 		st.Connected, st.Device, st.Name, st.Rate = true, t.addr, t.name, t.rate

@@ -233,3 +233,48 @@ func TestExpectationWindow(t *testing.T) {
 		t.Fatal("устаревшее ожидание сработало")
 	}
 }
+
+// Ответ Алисы: на его время платформа сама поднимает громкость и потом возвращает её (возврат приходит уже после конца диалога). Ползунок
+// Spotify при этом не трогается ни разу.
+func TestAnswerBoostDoesNotMoveSpotifySlider(t *testing.T) {
+	m, plat, s, v := volRig(t, 4, loggedIn) // колонка 20%
+	v.settle = 60 * time.Millisecond
+	s.slider(20)
+	waitFor(t, "начальная громкость принята", func() bool { return v.status().SoloistPct == 20 })
+	time.Sleep(30 * time.Millisecond) // первое сообщение Soloist разобрано
+	v.focus(true)
+	m.external(8) // платформа: на время ответа 40%
+	time.Sleep(40 * time.Millisecond)
+	v.focus(false)
+	time.Sleep(10 * time.Millisecond)
+	m.external(4) // и вернула 20% сразу после конца диалога
+	time.Sleep(150 * time.Millisecond)
+	if sets := s.setsCopy(); len(sets) != 0 {
+		t.Fatalf("ползунок Spotify двигали: %v", sets)
+	}
+	if asks := plat.asksCopy(); len(asks) != 0 {
+		t.Fatalf("платформу просили поменять громкость: %v", asks)
+	}
+}
+
+// «Алиса, тише» во время музыки: ползунок переезжает один раз, после диалога, на итоговую громкость.
+func TestVoiceVolumeDuringDialogMovesSliderAfterIt(t *testing.T) {
+	m, _, s, v := volRig(t, 10, loggedIn) // колонка 50%
+	v.settle = 60 * time.Millisecond
+	s.slider(50)
+	waitFor(t, "начальная громкость принята", func() bool { return v.status().SoloistPct == 50 })
+	time.Sleep(30 * time.Millisecond) // первое сообщение Soloist разобрано
+	v.focus(true)
+	m.external(14) // временная громкость ответа
+	time.Sleep(20 * time.Millisecond)
+	m.external(8) // «тише»: итог 40%
+	time.Sleep(40 * time.Millisecond)
+	if sets := s.setsCopy(); len(sets) != 0 {
+		t.Fatalf("во время диалога ползунок двигать рано: %v", sets)
+	}
+	v.focus(false)
+	waitFor(t, "ползунок Spotify на 40%", func() bool {
+		sets := s.setsCopy()
+		return len(sets) == 1 && sets[0] == 40
+	})
+}

@@ -17,8 +17,24 @@ type Status struct {
 	LogLevel    string            `json:"log_level"`
 	HeapKB      uint64            `json:"heap_kb"`
 	Goroutines  int               `json:"goroutines"`
+	Stock       *StockUse         `json:"stock,omitempty"`   // что ещё делает штатный mediad
 	Players     any               `json:"players,omitempty"` // с Detail: плееры автомата mediad
 	Details     map[string]any    `json:"details,omitempty"` // с Detail: DebugState каждого компонента по его имени
+}
+
+// StockUse — что с запуска демона досталось штатному mediad. Пока в Played что-то есть, без штатного плеера этот звук пропадёт.
+type StockUse struct {
+	SinceS   int64        `json:"since_s"`  // сколько секунд идёт учёт
+	Played   []StockCount `json:"played"`   // штатный mediad сам начал играть (по виду плеера)
+	Returned []StockCount `json:"returned"` // команды, которые движок взял, но вернул: не смог до первого звука
+	Passed   []StockCount `json:"passed"`   // команды платформы, которые движок пропустил как есть
+}
+
+// StockCount — счётчик: что, сколько раз и как давно в последний раз.
+type StockCount struct {
+	What string `json:"what"`
+	N    uint64 `json:"n"`
+	AgoS int64  `json:"ago_s"`
 }
 
 // ComponentStatus — компонент сборки в демоне.

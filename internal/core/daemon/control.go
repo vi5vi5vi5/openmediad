@@ -28,6 +28,9 @@ func (d *daemon) status(detail bool) ctlsock.Status {
 		return st
 	}
 	st.Music, st.Voice, st.Sounds = !d.m.NoMusic, d.m.Voice != nil, d.m.File != nil
+	if d.stock != nil {
+		st.Stock = d.stock.snapshot()
+	}
 	if detail {
 		st.Players = d.m.Snapshot()
 		st.Details = map[string]any{}
@@ -102,6 +105,21 @@ func (d *daemon) handle(ctx context.Context, req ctlsock.Request, send func(any)
 			return err
 		}
 		return send(msg)
+	case "control":
+		res, err := d.apiControl(req.Action)
+		if err != nil {
+			return err
+		}
+		return send(res)
+	case "players":
+		return send(d.apiPlaying())
+	case "events":
+		return d.apiEvents(ctx, send)
+	case "ask":
+		if err := d.apiAsk(req.Text); err != nil {
+			return err
+		}
+		return send("фраза передана Алисе")
 	}
 	return fmt.Errorf("неизвестная команда %q", req.Cmd)
 }

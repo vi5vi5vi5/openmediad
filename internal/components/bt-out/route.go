@@ -4,12 +4,13 @@ import (
 	"context"
 
 	"openmediad/internal/core/control"
-	"openmediad/internal/libs/aliced-client"
+	"openmediad/internal/core/quasar/alicedclient"
 )
 
-// Куда идёт нажатие кнопки на наушниках. Сначала его получает плеер движка (Spotify) через ядро: если музыка играет он, команду выполняет он,
-// и платформа о нажатии не узнаёт. Если плееру движка команда не принадлежит (играет Яндекс.Музыка или ничего), нажатие уходит платформе,
-// как если бы нажали на колонке.
+// Куда идёт нажатие кнопки на наушниках. Компонент делает один вызов ядра — Hub.Command(команда, «наушники»): играет плеер движка (Spotify) —
+// команду выполняет он, и платформа о нажатии не узнаёт; играет Яндекс.Музыка или ничего — ядро само передаёт нажатие платформе, как если бы
+// нажали на колонке. Поля Playing, Ask и Send — прежний собственный путь к платформе: он остаётся только на случай, когда у ядра нет пульта
+// платформы (ядро без демона, как в тестах).
 type buttonRoute struct {
 	Hub     *control.Hub                     // ядро: плееры движка (может быть nil — тогда всё платформе)
 	Playing func() bool                      // играет ли музыка Яндекса через движок
@@ -35,8 +36,15 @@ func playerCommand(b Button) (control.Cmd, bool) {
 
 // press обрабатывает нажатие.
 func (r *buttonRoute) press(b Button) {
-	if cmd, ok := playerCommand(b); ok && r.Hub.Do(cmd, control.Headphones) {
-		return // журнал об этом пишет ядро
+	if cmd, ok := playerCommand(b); ok {
+		by, err := r.Hub.Command(cmd, control.Headphones)
+		if err != nil {
+			r.Logf("кнопка наушников «%s»: платформе не передана: %v", b, err)
+			return
+		}
+		if by != "" {
+			return // журнал об этом пишет ядро
+		}
 	}
 	var err error
 	switch {

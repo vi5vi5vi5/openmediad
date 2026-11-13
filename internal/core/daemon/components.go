@@ -60,6 +60,9 @@ type (
 	phraseInterceptor interface {
 		InterceptPhrase(reqID, text string, fast bool) (handled bool)
 	}
+	// focusHandler — компонент хочет знать, что диалог с Алисой начался (true: она слушает, думает или говорит) и кончился (false).
+	// Музыку на это время ядро приглушает само; компоненту это нужно для своего (погасить подсветку, не мешать ответу).
+	focusHandler interface{ OnFocus(on bool) }
 )
 
 // startComponents создаёт включённые компоненты сборки и подключает их: бэкенды — к автомату mediad, модули — запускает.
@@ -103,6 +106,10 @@ func (d *daemon) startComponents(ctx context.Context) {
 			continue
 		}
 		c.obj = obj
+		for _, w := range hookMismatches(obj) {
+			d.j.Log(journal.Warn, "system", fmt.Sprintf("компонент %s: %s", rc.Name, w),
+				"Демон подключает компонент по методам с точной подписью. Метод назван как точка расширения, но подпись другая: исправьте её, иначе компонент не получит эти вызовы.", nil)
+		}
 		d.attach(c)
 		if _, ok := obj.(module); ok {
 			modules = append(modules, c)

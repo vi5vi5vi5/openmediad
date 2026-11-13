@@ -31,6 +31,9 @@ type member struct {
 // Hub собирает плееры, решает, кому достаётся команда, и следит, чтобы Spotify и Яндекс не играли вместе.
 type Hub struct {
 	Platform Platform // музыка Яндекса и автомат mediad (nil — только плееры движка)
+	// Remote (необязательный) — пульт музыки платформы: ему Command отдаёт команду, которую не взял ни один плеер движка и о которой
+	// платформа сама не знает (кнопка наушников, команда извне). nil — такая команда остаётся невыполненной.
+	Remote PlatformRemote
 	// OnHandled (необязательный) вызывается, когда плеер выполнил команду: для журнала.
 	OnHandled func(c Cmd, from Origin, player string)
 	// Logf (необязательный) — журнал уступок звука.
@@ -108,6 +111,25 @@ func (h *Hub) SetOwner(name string) {
 	h.mu.Unlock()
 }
 
+// PlayerInfo — плеер движка и его состояние (для «кто играет»).
+type PlayerInfo struct {
+	Name  string
+	State State
+}
+
+// Players — плееры движка с их состоянием сейчас, в порядке подключения.
+func (h *Hub) Players() []PlayerInfo {
+	if h == nil {
+		return nil
+	}
+	list := h.snapshot()
+	out := make([]PlayerInfo, 0, len(list))
+	for _, m := range list {
+		out = append(out, PlayerInfo{Name: m.name, State: m.p.State()})
+	}
+	return out
+}
+
 // situation — что звучит прямо сейчас, глазами тех плееров, которые слушаются этого источника.
 type situation struct {
 	yandex    bool    // играет музыка Яндекса
@@ -179,8 +201,42 @@ func (h *Hub) Idle() bool {
 // Do отдаёт команду плеерам; true — её выполнил плеер движка. false — никто не взял (играет Яндекс.Музыка или ничего, команда не ваша, нет связи):
 // источник поступает по-старому.
 func (h *Hub) Do(c Cmd, from Origin) bool {
+	_, ok := h.do(c, from)
+	return ok
+}
+
+// Command — единственный вызов для источника команд (кнопки наушников, сокет команд, свой компонент ввода): «сделай это, чей бы ни был звук».
+// Сначала команду получают плееры движка (как в Do). Если она не их, а платформа об этом действии сама не знает (Origin.PlatformSees), команда
+// уходит музыке платформы через пульт (Remote), как нажатие кнопки на колонке. Возвращает, кто выполнил: имя плеера движка, OwnerPlatform или
+// пусто — никто (нет пульта, или платформа и так знает о действии и ответит сама). Ошибка — пульт не смог передать команду платформе.
+func (h *Hub) Command(c Cmd, from Origin) (by string, err error) {
+	if name, ok := h.do(c, from); ok {
+		return name, nil
+	}
+	if h == nil || h.Remote == nil || from.PlatformSees() {
+		return "", nil
+	}
+	act := c
+	if c == Toggle { // для события и журнала: что это нажатие значит сейчас
+		act = Resume
+		if h.Platform != nil && h.Platform.Playing() {
+			act = Pause
+		}
+	}
+	if err := h.Remote.Command(c); err != nil {
+		return "", err
+	}
+	h.emit(Event{Cmd: act, From: from, Player: OwnerPlatform})
+	if h.OnHandled != nil {
+		h.OnHandled(act, from, OwnerPlatform)
+	}
+	return OwnerPlatform, nil
+}
+
+// do — Do, который ещё и называет плеер, выполнивший команду.
+func (h *Hub) do(c Cmd, from Origin) (string, bool) {
 	if h == nil {
-		return false
+		return "", false
 	}
 	now := h.now()
 	h.mu.Lock()
@@ -189,7 +245,7 @@ func (h *Hub) Do(c Cmd, from Origin) bool {
 		h.platformAt = now
 	case from == Speaker && c == Toggle && now.Sub(h.platformAt) < platformEcho:
 		h.mu.Unlock()
-		return false // платформа уже поставила на паузу или сняла сама, как со своим плеером
+		return "", false // платформа уже поставила на паузу или сняла сама, как со своим плеером
 	}
 	h.mu.Unlock()
 
@@ -222,18 +278,18 @@ func (h *Hub) Do(c Cmd, from Origin) bool {
 		}
 	}
 	if target == nil {
-		return false
+		return "", false
 	}
 	if from == Cloud {
 		h.mu.Lock()
 		echo := h.lastCmd == act && now.Sub(h.lastAt) < cloudEcho
 		h.mu.Unlock()
 		if echo {
-			return false
+			return "", false
 		}
 	}
 	if err := target.p.Do(act, from); err != nil {
-		return false
+		return "", false
 	}
 	if from != Virtual {
 		h.mu.Lock()
@@ -248,7 +304,7 @@ func (h *Hub) Do(c Cmd, from Origin) bool {
 	if h.OnHandled != nil {
 		h.OnHandled(act, from, target.name)
 	}
-	return true
+	return target.name, true
 }
 
 // Subscribe подписывает f на события плееров (Event); вызывается на каждое событие по очереди, поэтому f должна быть быстрой. Возвращает отписку.
@@ -270,6 +326,7 @@ func (h *Hub) Subscribe(f func(Event)) (cancel func()) {
 
 // emit объявляет событие подписчикам и запоминает его: то же самое, замеченное потом по состоянию плеера, повторно не объявляется.
 func (h *Hub) emit(e Event) {
+	e = Mark(e)
 	h.note(e.Player, e.Cmd)
 	h.mu.Lock()
 	subs := make([]func(Event), 0, len(h.subs))

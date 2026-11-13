@@ -26,6 +26,7 @@
 | `btout.go` | `Sink`: слежение за BlueZ / BlueALSA, `Available` / `Open`, громкость, `OnDirective` («выключи / включи блютуз»), `OnArrival` |
 | `transports.go` | `hideTransports`: что платформа знает о транспорте наушников (скрыт / простаивает) |
 | `reconnect.go` | переподключение выбранных наушников |
+| `mixer.go` (`Tail`) | хвост вывода: сколько звук идёт от смесителя до ушей (труба и буфер `aplay`, кодек, наушники). Движок ждёт его, прежде чем сообщить платформе «ответ Алисы закончен»: иначе она возвращала громкость и музыку раньше, чем ответ отзвучал, и конец ответа был тише начала. Оценка — по задержке PCM от BlueALSA, иначе 0,2 с; своя — настройкой `latency` |
 | `status.go` | `State`, `StatusLine` (строка в `status`), `DebugState` |
 | `mixer.go` | смеситель: один постоянный `aplay` в PCM BlueALSA; потоки складываются порциями по 20 мс, в паузах — тишина |
 | `volume.go`, `hold.go` | шкала громкости платформы и пересчёт; удержание громкости динамиков, пока подключены наушники |
@@ -33,4 +34,4 @@
 | `testoutput.go` | пробный выход для `openmediad test-sound bt-out` |
 | `register.go` | регистрация, настройки `[bt-out]`, подключение команды `bt` |
 
-**Использует:** `core/speaker/aplay`, `libs/bluez`, `libs/dbus`, `libs/alsactl`, `libs/aliced-client`, `libs/bt-command`.
+**Использует:** `core/speaker/aplay`, `libs/bluez`, `libs/dbus`, `libs/alsactl`, `core/quasar/alicedclient`, `core/control`, `libs/bt-command`.

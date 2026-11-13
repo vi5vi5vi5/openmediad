@@ -2,6 +2,7 @@ package alicevoice
 
 import (
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"openmediad/internal/core/engine"
@@ -26,9 +27,82 @@ type Backend struct {
 	Shared *Shared // общий декодер; nil — создаётся сам
 	Logf   func(string, ...any)
 
+	// keeper (необязательный) держит громкость колонки на время ответов (answervol.go); nil — как решит платформа.
+	// Меняется на ходу настройкой answer_volume (Reload).
+	keeper atomic.Pointer[answerKeeper]
+
 	mu     sync.Mutex
 	cur    *reply
 	closed bool
+}
+
+// OnFocus — диалог с Алисой начался или кончился (демон сообщает всем компонентам).
+func (b *Backend) OnFocus(on bool) {
+	if k := b.keeper.Load(); k != nil {
+		k.OnFocus(on)
+	}
+}
+
+// OnReply — ответ облака на запрос: по его директивам видно, просил ли человек поменять громкость.
+func (b *Backend) OnReply(_ string, directives []string) {
+	if k := b.keeper.Load(); k != nil {
+		k.OnReply(directives)
+	}
+}
+
+// DebugState — состояние удержания громкости ответов для status -v.
+func (b *Backend) DebugState() any {
+	k := b.keeper.Load()
+	if k == nil {
+		return map[string]any{"answer_volume": AnswerVolumePlatform}
+	}
+	return map[string]any{"answer_volume": AnswerVolumeHold, "hold": k.status()}
+}
+
+// setAnswerVolume включает или выключает удержание громкости ответов. Регулятора нет (не колонка, другая прошивка) — голос всё равно
+// работает, просто без удержания.
+func (b *Backend) setAnswerVolume(mode string) {
+	if mode != AnswerVolumeHold {
+		if k := b.keeper.Swap(nil); k != nil {
+			k.Close()
+			b.logf("громкость ответов: как решит колонка (answer_volume = \"platform\")")
+		}
+		return
+	}
+	if b.keeper.Load() != nil {
+		return
+	}
+	mc, err := openMaster()
+	if err != nil {
+		b.logf("громкость ответов не удерживается: регулятор громкости колонки недоступен (%v)", err)
+		return
+	}
+	k := newAnswerKeeper(mc, b.Logf)
+	if !b.keeper.CompareAndSwap(nil, k) {
+		k.Close()
+		return
+	}
+	b.logf("громкость ответов удерживается на уровне до ответа (answer_volume = \"hold\")")
+}
+
+func (b *Backend) logf(f string, a ...any) {
+	if b.Logf != nil {
+		b.Logf(f, a...)
+	}
+}
+
+// Reload применяет изменённые настройки на ходу: answer_volume переключается без перезапуска движка.
+func (b *Backend) Reload(cfg any) (restart []string) {
+	c, ok := cfg.(*Config)
+	if !ok || c == nil {
+		return nil
+	}
+	if err := c.validate(); err != nil {
+		b.logf("новые настройки голоса отвергнуты: %v", err)
+		return nil
+	}
+	b.setAnswerVolume(c.AnswerVolume)
+	return nil
 }
 
 type reply struct {
@@ -59,7 +133,7 @@ func (b *Backend) Start(id string) {
 		b.Shared = &Shared{}
 	}
 	r := &reply{id: id, src: NewSource(b.Shared, b.Logf)}
-	r.st = b.Engine.NewStream(id, engine.Voice, r.src, engine.Options{Spectrum: spectrum.SourceVoice}, engine.Events{
+	r.st = b.Engine.NewStream(id, engine.Voice, r.src, engine.Options{Spectrum: spectrum.SourceVoice, WaitTail: true}, engine.Events{
 		Playing: func() { b.Events.VoicePlaying(id) },
 		Ended: func() {
 			b.mu.Lock()
@@ -131,5 +205,8 @@ func (b *Backend) Shutdown() {
 	b.mu.Unlock()
 	if r != nil {
 		r.st.Close()
+	}
+	if k := b.keeper.Swap(nil); k != nil {
+		k.Close()
 	}
 }

@@ -325,7 +325,7 @@ source: bluetooth»), ставит себе и показывает на экр�
 **Кнопки наушников.** Свой плеер (MPRIS) колонка в BlueZ не регистрирует, поэтому команды AVRCP от наушников BlueZ отдаёт устройству ввода
 «<имя> (AVRCP)» (uinput, у ROG DELTA II — `/dev/input/event2`): PLAY → `KEY_PLAYCD`, PAUSE → `KEY_PAUSECD`, FORWARD → `KEY_NEXTSONG`,
 BACKWARD → `KEY_PREVIOUSSONG`, STOP → `KEY_STOPCD`. Платформа это устройство не читает. `bt-out` читает его сам и отдаёт команды платформе
-от имени клиента `aliced`, как пункты `maind --cli` (`libs/aliced-client`): регистрация `EndpointStorage_` (метод 1) и `PlaybackControlCapability`
+от имени клиента `aliced`, как пункты `maind --cli` (`core/quasar/alicedclient`): регистрация `EndpointStorage_` (метод 1) и `PlaybackControlCapability`
 (метод 13) с видом 2 — пауза/продолжить (с флагом 2 = 1: можно попросить музыку), 6 — дальше, 7 — назад, 1 — пауза; источник `"Keyboard"`.
 Платформа выполняет их как нажатие кнопки (`playback_next.Keyboard` → `audio_client_next_track`) [проверено 28.10.2026 и имитацией, и
 настоящими кнопками]. Размер `struct input_event` зависит от разрядности процесса: 64-битный демон читает по 24 байта, 32-битный shell колонки

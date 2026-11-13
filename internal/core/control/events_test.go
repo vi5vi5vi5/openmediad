@@ -79,7 +79,8 @@ func TestHubAnnouncesWhatItExecuted(t *testing.T) {
 	r.h.Do(Next, Voice)
 	r.h.Do(Prev, Headphones)
 	want := []Event{
-		{Pause, Headphones, "spotify"}, {Resume, Speaker, "spotify"}, {Next, Voice, "spotify"}, {Prev, Headphones, "spotify"},
+		{Cmd: Pause, From: Headphones, Player: "spotify"}, {Cmd: Resume, From: Speaker, Player: "spotify"},
+		{Cmd: Next, From: Voice, Player: "spotify"}, {Cmd: Prev, From: Headphones, Player: "spotify"},
 	}
 	if len(rec.got) != len(want) {
 		t.Fatalf("событий %d: %+v", len(rec.got), rec.got)

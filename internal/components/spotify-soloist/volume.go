@@ -3,6 +3,7 @@ package spotifysoloist
 import (
 	"context"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"openmediad/internal/libs/alsactl"
@@ -17,7 +18,8 @@ import (
 // способом — текстовой командой «громкость N» (как голосом; у неё N = 0…10, то есть уровень 2N, шаг 10%):
 //
 //	колонка → Spotify:  «тише», кнопки, приложение Яндекса меняют уровень → Master меняется → компонент ставит Soloist
-//	                    громкость в процентах уровня, ползунок в приложении Spotify переезжает;
+//	                    громкость в процентах уровня, ползунок в приложении Spotify переезжает. Во время диалога с Алисой
+//	                    ползунок ждёт его конца: на время ответа платформа сама меняет громкость и потом возвращает её;
 //	Spotify → колонка:  ползунок в приложении → через 300 мс покоя компонент просит платформу «громкость N» → она меняет уровень,
 //	                    Master и экран, а ползунок Spotify подтягивается к тому, что получилось (шаг 10%).
 //
@@ -55,6 +57,11 @@ const echoWindow = 1500 * time.Millisecond
 // sliderIdle — сколько ползунок должен постоять, чтобы громкость ушла платформе (пока тянут, запросов нет).
 const sliderIdle = 300 * time.Millisecond
 
+// dialogSettle — сколько после конца диалога с Алисой ждать, прежде чем передать Spotify громкость колонки. На время ответа платформа сама
+// меняет громкость и возвращает её (SmartVolume), причём возврат приходит уже после конца диалога, через десятки миллисекунд. Пока диалог идёт
+// и это время не вышло, ползунок Spotify не трогается: иначе он прыгал бы туда и обратно на каждом ответе.
+const dialogSettle = 300 * time.Millisecond
+
 type expectation struct {
 	val   int
 	until time.Time
@@ -91,6 +98,10 @@ type volumeSync struct {
 
 	events chan struct{} // что-то изменилось у Soloist (событие WebSocket)
 
+	dialog  atomic.Bool   // идёт диалог с Алисой
+	focusCh chan struct{} // диалог начался или кончился
+	settle  time.Duration // dialogSettle (в тестах короче)
+
 	mu     sync.Mutex
 	last   int // последняя громкость колонки, %
 	pushes struct{ toSoloist, toPlatform int }
@@ -99,7 +110,16 @@ type volumeSync struct {
 
 func newVolumeSync(m masterVol, lv levelMap, ctl soloistVol, plat func(n int) error, logf func(string, ...any)) *volumeSync {
 	return &volumeSync{m: m, lv: lv, ctl: ctl, plat: plat, logf: logf, now: time.Now, idle: sliderIdle, steps: 10,
-		events: make(chan struct{}, 1), last: -1, lastN: -1}
+		events: make(chan struct{}, 1), focusCh: make(chan struct{}, 1), settle: dialogSettle, last: -1, lastN: -1}
+}
+
+// focus сообщает, что диалог с Алисой начался (true) или кончился (не блокируется).
+func (v *volumeSync) focus(on bool) {
+	v.dialog.Store(on)
+	select {
+	case v.focusCh <- struct{}{}:
+	default:
+	}
 }
 
 // poke сообщает, что у Soloist что-то изменилось (вызывается из разбора событий; не блокируется).
@@ -145,10 +165,15 @@ func (v *volumeSync) run(ctx context.Context) {
 	pending := -1         // громкость ползунка (%), которую ещё не отдали платформе
 	var timer *time.Timer
 	var fire <-chan time.Time
+	deferred := false // громкость колонки менялась во время диалога: Spotify узнает её после него
+	settle := time.NewTimer(time.Hour)
+	settle.Stop()
+	var settled <-chan time.Time
 	defer func() {
 		if timer != nil {
 			timer.Stop()
 		}
+		settle.Stop()
 	}()
 	v.mu.Lock()
 	v.last = v.percent()
@@ -176,8 +201,28 @@ func (v *volumeSync) run(ctx context.Context) {
 			if same {
 				continue
 			}
-			// «Алиса, тише», кнопки, приложение Яндекса (или наш же запрос «громкость N»): ползунок Spotify переезжает к колонке
+			if v.dialog.Load() || settled != nil {
+				deferred = true // временная громкость ответа Алисы или просьба голосом: итог передадим после диалога
+				continue
+			}
+			// кнопки, приложение Яндекса (или наш же запрос «громкость N»): ползунок Spotify переезжает к колонке
 			if st := v.ctl.state(); st.Connected && st.LoggedIn && st.Volume != p {
+				pushToSoloist(p)
+			}
+		case <-v.focusCh:
+			if v.dialog.Load() || !deferred || settled != nil {
+				continue
+			}
+			settle.Reset(v.settle)
+			settled = settle.C
+		case <-settled:
+			settled = nil
+			if v.dialog.Load() {
+				continue // начался новый диалог: подождём его конца
+			}
+			deferred = false
+			// «Алиса, тише»: громкость, на которой колонка остановилась после диалога
+			if p, st := v.percent(), v.ctl.state(); p >= 0 && st.Connected && st.LoggedIn && st.Volume != p {
 				pushToSoloist(p)
 			}
 		case <-v.events:
@@ -192,6 +237,10 @@ func (v *volumeSync) run(ctx context.Context) {
 			if seen < 0 {
 				// первое сообщение после входа: Spotify подстраивается под колонку, а не наоборот
 				seen = st.Volume
+				if v.dialog.Load() || settled != nil {
+					deferred = true // идёт диалог: громкость колонки сейчас может быть временной
+					continue
+				}
 				if p := v.percent(); p >= 0 && p != st.Volume {
 					pushToSoloist(p)
 				}

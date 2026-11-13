@@ -128,6 +128,9 @@ func (r *loopRun) step(buf []byte) bool {
 		}
 		r.out.Drain()
 		r.drained = true
+		if !r.waitTail() {
+			return false // пока хвост звучал, поток закрыли
+		}
 		r.stopSpectrum()
 		s.mu.Lock()
 		s.playing = false
@@ -181,6 +184,41 @@ func (r *loopRun) step(buf []byte) bool {
 		s.ev.Playing()
 	}
 	return true
+}
+
+// maxTail — предел ожидания хвоста вывода: задержка наушников — доли секунды, а ошибка в её оценке не должна держать поток.
+const maxTail = 2 * time.Second
+
+// waitTail ждёт, пока отзвучит то, что вывод уже принял, но ещё не проиграл (Options.WaitTail и audio.Tailer). false — за это
+// время поток закрыли (событий после Close не бывает).
+func (r *loopRun) waitTail() bool {
+	s := r.s
+	if !s.opt.WaitTail {
+		return true
+	}
+	t, ok := r.out.(audio.Tailer)
+	if !ok {
+		return true
+	}
+	d := min(t.Tail(), maxTail)
+	if d <= 0 {
+		return true
+	}
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	for {
+		s.mu.Lock()
+		wake, closed := s.wake, s.closed
+		s.mu.Unlock()
+		if closed {
+			return false
+		}
+		select {
+		case <-wake: // пауза или смена выхода: звук уже весь отдан выводу, конец всё равно наступит в срок
+		case <-timer.C:
+			return true
+		}
+	}
 }
 
 // reroute переводит поток на другой выход маршрута, когда текущий отказал (наушники отключились посреди звука), и пишет

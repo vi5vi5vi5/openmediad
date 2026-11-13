@@ -10,7 +10,6 @@
 | [`bluez/`](bluez/README.md) | BlueZ и BlueALSA: устройства, спаривание, PCM | `bt-out`, `bt-in`, `bt-command` |
 | [`bt-command/`](bt-command/README.md) | команда терминала `openmediad bt` | приходит вместе с `bt-out` или `bt-in` |
 | [`alsactl/`](alsactl/README.md) | регулятор громкости ALSA (Master) и статус PCM | `bt-out`, инструменты разработчика |
-| [`aliced-client/`](aliced-client/README.md) | клиент aliced: пауза, «дальше», текстовый запрос Алисе | `bt-out` |
 | [`pcmstream/`](pcmstream/README.md) | звук от чужого процесса как источник движка (буфер, flush, возврат при паузе) | `spotify-soloist` |
 | [`wsclient/`](wsclient/README.md) | клиент WebSocket | `spotify-soloist` |
 | [`resample/`](resample/README.md) | передискретизация PCM (44,1 → 48 кГц) | `spotify-soloist` |

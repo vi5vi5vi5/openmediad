@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	alicedclient "openmediad/internal/libs/aliced-client"
+	alicedclient "openmediad/internal/core/quasar/alicedclient"
 )
 
 // Голос и Spotify. «Алиса, пауза / дальше / назад / продолжи» и короткие команды без «Алиса» ведёт ядро (core/control): оно знает, чей сейчас
@@ -128,6 +128,14 @@ func (c *Component) InterceptPhrase(reqID, text string, fast bool) bool {
 // directiveEcho — сколько после перехваченной фразы директива того же действия считается повтором: фразу уже выполнили, а облако,
 // если отмена диалога не успела, всё равно ответило.
 const directiveEcho = 6 * time.Second
+
+// OnFocus — диалог с Алисой начался или кончился (демон сообщает всем компонентам): на это время связь громкости с ползунком Spotify
+// придерживает перемены громкости колонки (volume.go).
+func (c *Component) OnFocus(on bool) {
+	if v := c.vol; v != nil {
+		v.focus(on)
+	}
+}
 
 // OnDirective получает имя каждой директивы ответа Алисы (интерфейс демона directiveHandler). Директивы управления плеером (player_pause …)
 // разбирает ядро; здесь только player_like: облако поняло «лайк» без слова «Алиса», а лайк ставит Spotify.

@@ -10,9 +10,9 @@ import (
 	"openmediad/internal/core/config"
 	"openmediad/internal/core/control"
 	"openmediad/internal/core/platform/proc"
+	"openmediad/internal/core/quasar/alicedclient"
 	"openmediad/internal/core/quasar/mediad"
 	"openmediad/internal/core/registry"
-	"openmediad/internal/libs/aliced-client"
 	"openmediad/internal/libs/alsactl"
 	"openmediad/internal/libs/bluez"
 	_ "openmediad/internal/libs/bt-command" // команда `bt` приходит вместе с компонентом
@@ -26,6 +26,7 @@ type Config struct {
 	Volume    string        `conf:"volume"`    // speaker | headphones
 	Reconnect time.Duration `conf:"reconnect"` // 0 — не переподключать
 	Hold      bool          `conf:"hold_speaker"`
+	Latency   time.Duration `conf:"latency"` // 0 — оценить самим
 }
 
 // masterControl — регулятор громкости колонки (пользовательский элемент ALSA; amixer называет его «Master»).
@@ -37,7 +38,9 @@ device = ""              # адрес наушников (AA:BB:CC:DD:EE:FF); п
 aplay = "/usr/bin/aplay"
 volume = "speaker"       # speaker — кнопки, голос и экран колонки управляют громкостью наушников; headphones — только сами наушники
 hold_speaker = true      # пока подключены наушники, громкость динамиков (голос Алисы) не меняется вместе с ними
-reconnect = "30s"        # как часто подключать выбранные наушники, пока их нет; "0s" — не подключать самим`
+reconnect = "30s"        # как часто подключать выбранные наушники, пока их нет; "0s" — не подключать самим
+latency = "0s"           # сколько звук идёт от движка до ушей: на это время откладывается «ответ Алисы закончен», чтобы платформа не вернула
+                         # громкость раньше конца ответа; "0s" — оценить самим (обычно 0,3–0,4 с)`
 
 // platformPID — PID платформы (maind --platformd); 0 — не найдена.
 func platformPID() int {
@@ -67,6 +70,9 @@ func init() {
 			if c.Volume != VolumeSpeaker && c.Volume != VolumeHeadphones {
 				return nil, fmt.Errorf("bt-out.volume: %q — допустимо speaker или headphones", c.Volume)
 			}
+			if c.Latency < 0 || c.Latency > 2*time.Second {
+				return nil, fmt.Errorf("bt-out.latency: %v — от 0 (оценить самим) до 2 с", c.Latency)
+			}
 			if c.Reconnect < 0 || c.Reconnect > 0 && c.Reconnect < 5*time.Second {
 				return nil, fmt.Errorf("bt-out.reconnect: %v — 0 или не меньше 5 с", c.Reconnect)
 			}
@@ -87,6 +93,7 @@ func init() {
 				VolumeMap:   vm,
 				Reconnect:   c.Reconnect,
 				HoldSpeaker: c.Hold,
+				Latency:     c.Latency,
 				PlatformLevel: func(level int) error { // как голосом: «громкость N» (0–10), уровень платформы — 2N
 					n := level / 2
 					if n == 0 && level > 0 {

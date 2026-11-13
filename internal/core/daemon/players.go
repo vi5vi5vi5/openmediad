@@ -34,6 +34,11 @@ func (d *daemon) virtualCommand(name string) {
 
 // controlHandled пишет в журнал, что плеер движка выполнил команду.
 func (d *daemon) controlHandled(c control.Cmd, from control.Origin, player string) {
+	if player == control.OwnerPlatform {
+		d.j.Log(journal.Info, "control", fmt.Sprintf("%s (%s): передано музыке платформы", c, from),
+			"Команду не взял ни один плеер движка (играет музыка платформы или ничего), а платформа о ней сама не знает: ядро передало её платформе, как нажатие кнопки на колонке.", nil)
+		return
+	}
 	d.j.Log(journal.Info, "control", fmt.Sprintf("%s (%s): выполнено плеером %s", c, from, player),
 		"Команду плееру отдал источник (кнопки колонки, кнопки наушников, голос, ответ облака, платформа); музыку играет движок, а платформа про этот плеер не знает, поэтому выполнил его компонент.", nil)
 }

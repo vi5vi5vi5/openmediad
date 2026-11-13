@@ -33,8 +33,8 @@ import (
 	"openmediad/internal/core/led"
 	"openmediad/internal/core/platform/disk"
 	"openmediad/internal/core/platform/layout"
+	alicedclient "openmediad/internal/core/quasar/alicedclient"
 	"openmediad/internal/core/quasar/mediad"
-	alicedclient "openmediad/internal/libs/aliced-client"
 	"openmediad/internal/libs/volmap"
 )
 
@@ -165,7 +165,7 @@ func (c *Component) Start(ctx context.Context) error {
 	c.sup = &supervisor{start: c.startProc, probe: threadTicks, logf: c.logf, kick: make(chan struct{}, 1)}
 	c.cache = &cacheGuard{dir: c.p.cache(), maxMB: cfg.CacheMB, keepFreeMB: cfg.KeepFreeMB, freeKB: disk.FreeKB, logf: c.logf}
 
-	routines := []func(context.Context){c.ctl.run, c.sup.run, c.cache.run}
+	routines := []func(context.Context){c.ctl.run, c.sup.run, c.cache.run, c.clockWatch}
 	if cfg.VolumeSync {
 		if m, err := openMaster(); err != nil {
 			c.logf("громкость колонки недоступна (%v): ползунок Spotify не связан с колонкой, громкость регулирует сам Soloist", err)

@@ -69,6 +69,8 @@ type daemon struct {
 	gate    *voiceGate   // шлюз голоса Алисы (nil, пока голос играет не движок)
 	led     *led.Panel   // панель индикации: модули сообщают, кто играет и куда идёт звук (подсветку рисует компонент led-ring)
 	hub     *control.Hub // единая дверь команд плееру: источники (кнопки, наушники) говорят «пауза», плеер движка (Spotify) выполняет
+	api     api          // управление через сокет команд: события для подписчиков, фраза Алисе
+	stock   *stockUse    // что ещё делает штатный mediad (счётчики для status)
 
 	platformLog string // лог платформы, по которому видны кнопка и жесты (в тестах подменяется)
 }
@@ -98,7 +100,7 @@ func Run(ctx context.Context, o Options) error {
 	if cfg.General.Mode == "replace" {
 		return errors.New("режим replace ещё не готов (фаза 12 плана): укажите mode = \"shim\"")
 	}
-	d := &daemon{opt: o, cfg: cfg, started: time.Now(), platformLog: buttons.PlatformLog}
+	d := &daemon{opt: o, cfg: cfg, started: time.Now(), platformLog: buttons.PlatformLog, stock: newStockUse()}
 	defer func() {
 		for i := len(d.closers) - 1; i >= 0; i-- {
 			d.closers[i]()
@@ -163,6 +165,7 @@ func (d *daemon) setupEngine() {
 	sp := &speaker.Sink{Aplay: d.cfg.Speaker.Aplay, Device: d.cfg.Speaker.Device}
 	d.led = led.NewPanel()
 	d.hub = &control.Hub{OnHandled: d.controlHandled, Logf: d.j.Logf("control")}
+	d.hub.Subscribe(d.playerEvent) // события плееров — подписчикам сокета команд
 	d.rt = newRouter(d.cfg.Route, sp)
 	d.rt.ind = d.led
 	d.eng = &engine.Engine{Router: d.rt, Logf: d.j.Logf("engine")}
@@ -184,6 +187,9 @@ func (d *daemon) setupShim() error {
 		},
 		Forward: func(ctx any, body []byte) {
 			if c, ok := ctx.(*shim.Conn); ok {
+				if d.stock != nil {
+					d.stock.returned(body)
+				}
 				if err := d.proxy.ForwardTo(c, wire.Wrap(wire.TypeAudioCommand, body)); err != nil {
 					d.j.Log(journal.Warn, "shim", fmt.Sprintf("возврат команды mediad: %v", err), "", nil)
 				}
@@ -198,12 +204,19 @@ func (d *daemon) setupShim() error {
 		Back:    mediad.NoBackend{},
 		NoMusic: true,
 		Duck:    d.cfg.Focus.DuckGain,
-		Logf:    d.j.Logf("player"),
-		Note:    func(kind, id, detail string) { d.j.Add(explain.Note(kind, id, detail)) },
+		// приглушение на время диалога — дело ядра: приглушается класс «музыка» целиком, какой бы компонент её ни играл
+		MusicGain: func(g float64) { d.eng.SetClassGain(engine.Music, g) },
+		OnFocus:   d.focusChanged,
+		Logf:      d.j.Logf("player"),
+		Note:      func(kind, id, detail string) { d.j.Add(explain.Note(kind, id, detail)) },
 	}
 	d.proxy.Intercept = d.intercept
 	d.proxy.Tap = d.tap
 	d.hub.Platform = d.m // музыка Яндекса: ядро по ней решает, чей звук, и уступает его
+	// пульт музыки платформы: команда, которую не взял плеер движка и о которой платформа сама не знает, уходит ей как нажатие кнопки
+	remote := newPlatformRemote(d.m.Playing)
+	d.hub.Remote = remote
+	d.api.ask = remote.ask
 	return nil
 }
 

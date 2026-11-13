@@ -11,6 +11,7 @@ import (
 
 	_ "openmediad/internal/components/catalog" // каталог компонентов: ядро получает его от cmd/openmediad
 	"openmediad/internal/core/audio"
+	"openmediad/internal/core/ctlsock"
 )
 
 // sandbox — настройки и сокет во временном каталоге (демон «не запущен»).
@@ -155,5 +156,51 @@ func TestToneHasSoftEdges(t *testing.T) {
 	last := int16(binary.LittleEndian.Uint16(b[len(b)-2:]))
 	if first != 0 || last > 50 || last < -50 {
 		t.Errorf("края не плавные: %d … %d", first, last)
+	}
+}
+
+// Команды управления без демона честно говорят, что он не запущен; неверные аргументы — ошибка использования.
+func TestPlayerEventsAskWithoutDaemon(t *testing.T) {
+	sandbox(t)
+	for _, args := range [][]string{{"player"}, {"player", "next"}, {"player", "-json"}, {"events"}, {"ask", "включи", "свет"}} {
+		if code, _, errOut := runCLI(args...); code != ExitError || !strings.Contains(errOut, "не запущен") {
+			t.Fatalf("%v: код %d, %q", args, code, errOut)
+		}
+	}
+	for _, args := range [][]string{{"player", "jump"}, {"player", "next", "ещё"}, {"ask"}, {"events", "лишнее"}} {
+		if code, _, _ := runCLI(args...); code != ExitUsage {
+			t.Fatalf("%v: код %d, ждали ошибку использования", args, code)
+		}
+	}
+}
+
+func TestEventLine(t *testing.T) {
+	for _, c := range []struct {
+		e    ctlsock.Event
+		want string
+	}{
+		{ctlsock.Event{Type: ctlsock.EventDialog, On: true}, "диалог с Алисой начался"},
+		{ctlsock.Event{Type: ctlsock.EventDialog}, "диалог с Алисой кончился"},
+		{ctlsock.Event{Type: ctlsock.EventPlayer, Action: "pause", From: "headphones", Player: "spotify-soloist"}, "spotify-soloist: pause (откуда: headphones)"},
+		{ctlsock.Event{Type: ctlsock.EventPlayer, Action: "next", From: "fast", Player: "x", PlatformDisplay: true}, "покажет прошивка"},
+	} {
+		if got := eventLine(c.e); !strings.Contains(got, c.want) {
+			t.Errorf("%+v: %q, ждали в строке %q", c.e, got, c.want)
+		}
+	}
+}
+
+// Строка status о штатном плеере: пока он ничего не играл сам — так и сказано; иначе — что и сколько раз.
+func TestStockLine(t *testing.T) {
+	quiet := stockLine(ctlsock.StockUse{SinceS: 7200})
+	if !strings.Contains(quiet, "сам ничего не играл за 2 ч") {
+		t.Fatalf("тихо: %q", quiet)
+	}
+	if got := stockLine(ctlsock.StockUse{SinceS: 60, Returned: []ctlsock.StockCount{{What: "play", N: 1}}}); !strings.Contains(got, "возвращал") {
+		t.Fatalf("с возвратами: %q", got)
+	}
+	busy := stockLine(ctlsock.StockUse{SinceS: 7200, Played: []ctlsock.StockCount{{What: "музыка и потоки", N: 3, AgoS: 300}}})
+	if !strings.Contains(busy, "музыка и потоки ×3 (5 мин назад)") {
+		t.Fatalf("играл: %q", busy)
 	}
 }

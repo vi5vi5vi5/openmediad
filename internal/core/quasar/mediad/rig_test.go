@@ -97,7 +97,7 @@ func (b *fakeBackend) Seek(id string, p uint64) {
 	b.mu.Unlock()
 }
 
-func (b *fakeBackend) Duck(g float64)              { b.mu.Lock(); b.gain = g; b.mu.Unlock() }
+func (b *fakeBackend) setGain(g float64)           { b.mu.Lock(); b.gain = g; b.mu.Unlock() }
 func (b *fakeBackend) Net(string) (uint64, uint64) { return 1000, 5000 }
 func (b *fakeBackend) Pos(id string) uint64        { b.mu.Lock(); defer b.mu.Unlock(); return b.posLocked(id) }
 
@@ -130,9 +130,10 @@ func newRig(t *testing.T) *rig {
 			r.evs = append(r.evs, got{r.now, append([]byte(nil), b...)})
 			r.mu.Unlock()
 		},
-		Forward: func(_ any, b []byte) { r.fwd = append(r.fwd, append([]byte(nil), b...)) },
-		Now:     func() time.Time { return base.Add(r.now) },
-		Mono:    func() uint64 { return 1000000 + uint64(r.now/time.Millisecond) },
+		Forward:   func(_ any, b []byte) { r.fwd = append(r.fwd, append([]byte(nil), b...)) },
+		MusicGain: r.be.setGain,
+		Now:       func() time.Time { return base.Add(r.now) },
+		Mono:      func() uint64 { return 1000000 + uint64(r.now/time.Millisecond) },
 		After: func(d time.Duration, f func()) func() {
 			tm := &timer{at: r.now + d, f: f}
 			r.mu.Lock()

@@ -41,7 +41,6 @@ type Backend interface {
 	Pause(id string)                          // остановить вывод, источник и позицию держать
 	Close(id string)                          // освободить всё
 	Seek(id string, posMs uint64)             // перейти к позиции в открытом плеере
-	Duck(gain float64)                        // громкость музыки
 	Pos(id string) uint64                     // текущая позиция, мс
 	Net(id string) (got, total uint64)        // скачано байт / длина потока (для diag)
 }
@@ -249,7 +248,7 @@ func (m *Machine) Play(ctx any, c msg.AudioCommand) bool {
 	case !in.opened && !m.hasSource(id):
 		m.Back.Open(id, TrackOf(in.meta.Desc), in.offset)
 	}
-	m.Back.Duck(m.gain())
+	m.setMusicGain(m.gain())
 	for _, e := range out {
 		m.Emit(e)
 	}

@@ -7,7 +7,7 @@ import (
 
 	"openmediad/internal/core/control"
 	"openmediad/internal/core/control/controltest"
-	"openmediad/internal/libs/aliced-client"
+	"openmediad/internal/core/quasar/alicedclient"
 )
 
 // routeRig — маршрут нажатий с записью того, что ушло платформе.
@@ -95,5 +95,26 @@ func TestPlatformErrorIsLoggedNotFatal(t *testing.T) {
 	g.r.press(ButtonNext)
 	if len(g.logged) != 1 || !strings.Contains(g.logged[0], "не передана") {
 		t.Fatalf("журнал: %v", g.logged)
+	}
+}
+
+// routeRemote — пульт платформы у ядра: помнит, что ему передали.
+type routeRemote struct{ got []control.Cmd }
+
+func (r *routeRemote) Command(c control.Cmd) error { r.got = append(r.got, c); return nil }
+
+// У ядра есть пульт платформы (так в демоне): нажатие уходит платформе через ядро одним вызовом, собственный путь компонента не нужен.
+func TestButtonGoesToPlatformThroughTheHub(t *testing.T) {
+	g := newRouteRig(controltest.NewPlayer(control.State{}))
+	rem := &routeRemote{}
+	g.r.Hub.Remote = rem
+	g.yandex = true
+	g.r.press(ButtonPlayPause)
+	g.r.press(ButtonNext)
+	if len(rem.got) != 2 || rem.got[0] != control.Toggle || rem.got[1] != control.Next {
+		t.Fatalf("ядро передало платформе %v", rem.got)
+	}
+	if len(g.asked) != 0 || len(g.sent) != 0 {
+		t.Fatalf("компонент пошёл к платформе сам: фразы %v, команды %v", g.asked, g.sent)
 	}
 }

@@ -74,6 +74,9 @@ func printStatus(c *Ctx, st ctlsock.Status, verbose bool) {
 	}
 	c.Printf("шина:       %s\n", conns)
 	c.Printf("память:     %s\n", memoryLine(st.PID, st.HeapKB))
+	if st.Stock != nil {
+		c.Printf("штатный:    %s\n", stockLine(*st.Stock))
+	}
 	var comps []string
 	for _, cs := range st.Components {
 		switch {
@@ -96,6 +99,9 @@ func printStatus(c *Ctx, st ctlsock.Status, verbose bool) {
 		c.Printf("внимание:   %s\n", w)
 	}
 	if verbose {
+		if st.Stock != nil {
+			printStock(c, *st.Stock)
+		}
 		printJSON(c, "плееры", st.Players)
 		names := make([]string, 0, len(st.Details))
 		for n := range st.Details {
@@ -106,6 +112,39 @@ func printStatus(c *Ctx, st ctlsock.Status, verbose bool) {
 			printJSON(c, n, st.Details[n])
 		}
 	}
+}
+
+// stockLine — одной строкой: что штатный mediad сыграл сам с запуска демона. Это и есть то, чего движку не хватает до работы без него.
+func stockLine(s ctlsock.StockUse) string {
+	since := humanDuration(time.Duration(s.SinceS) * time.Second)
+	if len(s.Played) == 0 {
+		line := "mediad сам ничего не играл за " + since
+		if len(s.Returned) > 0 {
+			line += "; движок возвращал ему команды (status -v)"
+		}
+		return line
+	}
+	parts := make([]string, 0, len(s.Played))
+	for _, p := range s.Played {
+		parts = append(parts, fmt.Sprintf("%s ×%d (%s назад)", p.What, p.N, humanDuration(time.Duration(p.AgoS)*time.Second)))
+	}
+	return "mediad сам сыграл за " + since + ": " + strings.Join(parts, ", ")
+}
+
+// printStock — подробно: что сыграл штатный mediad, что движок ему вернул и что пропустил.
+func printStock(c *Ctx, s ctlsock.StockUse) {
+	section := func(title string, list []ctlsock.StockCount) {
+		if len(list) == 0 {
+			return
+		}
+		c.Printf("%s\n", title)
+		for _, x := range list {
+			c.Printf("  %-34s ×%-6d %s назад\n", x.What, x.N, humanDuration(time.Duration(x.AgoS)*time.Second))
+		}
+	}
+	section("штатный mediad сам сыграл (этого движок пока не умеет):", s.Played)
+	section("команды, которые движок взял, но вернул штатному mediad (не смог до первого звука):", s.Returned)
+	section("команды платформы, которые движок пропустил штатному mediad:", s.Passed)
 }
 
 // memoryLine — Pss демона и его потомков (aplay, maind --gst-launch): сколько движок на самом деле стоит колонке.
