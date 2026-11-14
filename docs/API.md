@@ -39,7 +39,7 @@ JSON, ответ — строки `{"ok":true,"data":…}` или `{"ok":false,"
 
 ```json
 {"owner":"spotify-soloist","dialog":false,"platform_playing":false,
- "players":[{"name":"spotify-soloist","ready":true,"playing":true,"sounding":true,"paused":false,"resumable":false,"track":"spotify:track:…"}],
+ "players":[{"name":"spotify-soloist","ready":true,"playing":true,"sounding":true,"paused":false,"resumable":false,"track":"spotify:track:…","title":"Кино — Группа крови"}],
  "platform":[]}
 ```
 

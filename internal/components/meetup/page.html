@@ -1,0 +1,245 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Колонка в MeetUp</title>
+<style>
+  :root { --bg:#0e0e10; --card:#161619; --inset:#1e1e22; --line:#33333a; --text:#f2f2f4; --dim:#9a9aa3; --accent:#b6f23c; --onaccent:#10130a; --bad:#ff7a70; }
+  @media (prefers-color-scheme: light) {
+    :root { --bg:#f4f4f6; --card:#fff; --inset:#f0f0f3; --line:#d6d6dc; --text:#17171a; --dim:#63636d; --accent:#4d7c0f; --onaccent:#fff; --bad:#b42318; }
+  }
+  * { box-sizing: border-box; }
+  [hidden] { display:none !important; }
+  body { margin:0; padding:16px; background:var(--bg); color:var(--text); font:16px/1.45 system-ui, sans-serif; }
+  main { max-width:560px; margin:0 auto; display:grid; gap:12px; }
+  h1 { font-size:20px; margin:4px 0; }
+  h2 { font-size:16px; margin:0; }
+  section { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:14px; display:grid; gap:10px; }
+  label { display:grid; gap:4px; font-size:14px; color:var(--dim); }
+  input[type=text], input[type=url], input[type=password] { width:100%; padding:10px; border-radius:8px; border:1px solid var(--line); background:var(--inset); color:var(--text); font:inherit; }
+  .row { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
+  button { padding:10px 16px; border-radius:8px; border:1px solid var(--line); background:var(--inset); color:var(--text); font:inherit; cursor:pointer; }
+  button.main { background:var(--accent); border-color:var(--accent); color:var(--onaccent); font-weight:600; }
+  button.small { padding:4px 10px; font-size:14px; }
+  button:disabled { opacity:.5; cursor:default; }
+  .check { display:flex; gap:10px; align-items:flex-start; color:var(--text); font-size:16px; }
+  .check input { width:20px; height:20px; margin-top:2px; flex:none; accent-color:var(--accent); }
+  .check small { display:block; color:var(--dim); }
+  input[type=range] { width:100%; accent-color:var(--accent); }
+  #status { font-weight:600; }
+  #error, .bad { color:var(--bad); font-size:14px; }
+  .dim { color:var(--dim); font-size:14px; }
+  .list { display:grid; gap:6px; }
+  .person { display:flex; gap:10px; align-items:center; justify-content:space-between; }
+  .person span small { color:var(--dim); }
+</style>
+</head>
+<body>
+<main>
+  <h1>Колонка в MeetUp</h1>
+
+  <section>
+    <div id="status">…</div>
+    <div id="room" class="dim"></div>
+    <div id="error"></div>
+    <div id="hint" class="dim"></div>
+    <div id="people" class="list"></div>
+    <div id="stats" class="dim"></div>
+  </section>
+
+  <section>
+    <h2>Комната</h2>
+    <label>Ссылка на конференцию
+      <input id="link" type="url" placeholder="https://сервер/conference.html?room=…" autocomplete="off">
+    </label>
+    <div class="dim" id="linknote"></div>
+    <label>Имя колонки в комнате <span id="namenote"></span>
+      <input id="name" type="text" maxlength="64">
+    </label>
+    <label>Пароль комнаты <span id="passnote"></span>
+      <input id="pass" type="password" autocomplete="off" placeholder="если комната с паролем">
+    </label>
+    <label>Фраза шифрования <span id="phrasenote"></span>
+      <input id="phrase" type="password" autocomplete="off" placeholder="если комната шифруется по фразе">
+    </label>
+    <div class="row">
+      <button class="main" id="join">Войти в комнату</button>
+      <button id="leave">Выйти</button>
+      <button id="forget" class="small">Стереть пароль и фразу</button>
+    </div>
+  </section>
+
+  <section>
+    <h2>Аккаунт MeetUp</h2>
+    <div id="acct" class="dim"></div>
+    <div id="acctform" class="list">
+      <label>Логин
+        <input id="login" type="text" autocomplete="username" maxlength="32">
+      </label>
+      <label>Пароль
+        <input id="password" type="password" autocomplete="current-password">
+      </label>
+    </div>
+    <div class="row">
+      <button id="signin">Войти в аккаунт</button>
+      <button id="signout">Выйти из аккаунта</button>
+      <span id="acctnote" class="bad"></span>
+    </div>
+    <div class="dim">Аккаунт заводится на сервере из ссылки. Пароль уходит серверу и на колонке не сохраняется: хранится только сессия.</div>
+  </section>
+
+  <section>
+    <h2>Звук и чат</h2>
+    <label class="check"><input type="checkbox" id="audio"><span>Звук колонки в конференцию<small>Музыка и голос Алисы уходят в комнату, а не в динамики. Нужен выход «meetup» в разделе [route] настроек движка.</small></span></label>
+    <label class="check"><input type="checkbox" id="chat"><span>Команды из чата<small>!play, !pause, !next, !prev, !np, !vol, !help.</small></span></label>
+    <label class="check"><input type="checkbox" id="alice"><span>Фразы Алисе из чата<small>!алиса какая погода, !play название. Алиса выполнит любую просьбу, как голосом.</small></span></label>
+    <label>Громкость в конференции: <span id="volv"></span>
+      <input type="range" id="volume" min="0" max="100" step="1">
+    </label>
+  </section>
+
+  <section>
+    <h2>Кого слушаться</h2>
+    <label class="check"><input type="checkbox" id="obey_new"><span>Слушаться новых участников<small>Действует на всех, для кого нет личного правила. Личное правило ставится галочкой у участника в списке наверху.</small></span></label>
+    <div id="rules" class="list"></div>
+    <div class="dim">Участника с аккаунтом колонка узнаёт по аккаунту. Участника без аккаунта — только по имени, а имя может взять кто угодно.</div>
+  </section>
+
+  <section>
+    <h2>Чат</h2>
+    <label>Написать в чат от имени колонки
+      <input id="text" type="text" maxlength="1000">
+    </label>
+    <div class="row"><button id="say">Отправить</button><span id="saynote" class="dim"></span></div>
+  </section>
+</main>
+<script>
+const $ = id => document.getElementById(id);
+const touched = {};
+let last = null;
+
+async function api(path, body) {
+  const r = await fetch(path, body === undefined ? {} : {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body)});
+  const j = await r.json().catch(() => ({error: "ответ колонки не разобран"}));
+  if (!r.ok) throw new Error(j.error || ("ошибка " + r.status));
+  return j;
+}
+
+function el(tag, text, cls) {
+  const e = document.createElement(tag);
+  if (text) e.textContent = text;
+  if (cls) e.className = cls;
+  return e;
+}
+
+// Список перестраивается, только когда изменились его данные: иначе галочка, по которой как раз щёлкают, пропадала бы под курсором.
+const drawn = {};
+function list(id, data, build) {
+  const sig = JSON.stringify(data);
+  if (drawn[id] === sig) return;
+  drawn[id] = sig;
+  $(id).replaceChildren(...data.map(build));
+}
+
+function show(s) {
+  last = s;
+  $("status").textContent = "Колонка " + s.status;
+  const marks = [s.room, s.title, s.account_in_use ? "под аккаунтом" : "", s.e2e === "link" ? "шифрование: ключ из ссылки" : s.e2e === "phrase" ? "шифрование: по фразе" : ""];
+  $("room").textContent = marks.filter(Boolean).join(" · ");
+  $("error").textContent = s.error || "";
+  $("hint").textContent = s.hint || "";
+
+  list("people", s.participants || [], p => {
+    const row = el("label", "", "person check");
+    const name = el("span", p.name + " ");
+    name.append(el("small", p.account ? "аккаунт" : "без аккаунта"));
+    const box = el("input");
+    box.type = "checkbox";
+    box.checked = p.obey;
+    box.title = "Слушаться команд этого участника";
+    box.onchange = () => post("/api/obey", {key: p.key, name: p.name, allow: box.checked});
+    row.append(name, box);
+    return row;
+  });
+  $("stats").textContent = s.phase === "joined"
+    ? `Потоков звука: ${s.streams} · кадров отправлено: ${s.frames_sent}, пропало: ${s.frames_dropped} · команд: ${s.commands}` +
+      (s.rtt_ms >= 0 ? ` · задержка ${s.rtt_ms} мс` : "") + (s.skipped_mb >= 1 ? ` · чужого потока пропущено: ${s.skipped_mb.toFixed(0)} МБ` : "")
+    : "";
+
+  $("linknote").textContent = s.has_link ? "Ссылка сохранена. Чтобы сменить комнату, вставьте новую." : "";
+  $("namenote").textContent = s.account_in_use ? "(под аккаунтом имя берётся из профиля)" : "";
+  $("passnote").textContent = s.has_password ? "(задан)" : "";
+  $("phrasenote").textContent = s.has_phrase ? "(задана)" : "";
+  $("forget").hidden = !s.has_password && !s.has_phrase;
+  $("leave").disabled = !s.connect;
+
+  $("acct").textContent = s.account ? "Вход выполнен: " + s.account : "Вход не выполнен: колонка входит в комнаты без аккаунта, под именем.";
+  $("acctform").hidden = !!s.account;
+  $("signin").hidden = !!s.account;
+  $("signout").hidden = !s.account;
+
+  for (const k of ["audio", "chat", "alice", "obey_new"]) if (!touched[k]) $(k).checked = s[k];
+  if (!touched.volume) { $("volume").value = s.volume; $("volv").textContent = s.volume + " %"; }
+  if (!touched.name && document.activeElement !== $("name")) $("name").value = s.name;
+
+  const present = new Set((s.participants || []).map(p => p.key));
+  const absent = (s.rules || []).filter(r => !present.has(r.key));
+  list("rules", absent, r => {
+    const row = el("div", "", "person");
+    const who = el("span", (r.name || "участник") + " ");
+    who.append(el("small", (r.key.includes("|u|") ? "аккаунт" : "без аккаунта") + " · " + (r.allow ? "слушаться" : "не слушаться")));
+    const b = el("button", "Забыть", "small");
+    b.onclick = () => post("/api/obey", {key: r.key, name: r.name, allow: null});
+    row.append(who, b);
+    return row;
+  });
+}
+
+async function refresh() {
+  try { show(await api("/api/state")); } catch (e) { $("status").textContent = "Нет связи с колонкой"; }
+}
+
+async function post(path, body, key) {
+  try { show(await api(path, body)); $("error").textContent = ""; return true; }
+  catch (e) { $("error").textContent = e.message; return false; }
+  finally { if (key) delete touched[key]; }
+}
+
+$("join").onclick = async () => {
+  const body = {connect: true, name: $("name").value};
+  if ($("link").value.trim()) body.link = $("link").value.trim();
+  if ($("pass").value) body.room_password = $("pass").value;
+  if ($("phrase").value) body.e2e_phrase = $("phrase").value;
+  if (await post("/api/settings", body, "name")) for (const id of ["link", "pass", "phrase"]) $(id).value = "";
+};
+$("leave").onclick = () => post("/api/settings", {connect: false});
+$("forget").onclick = () => post("/api/settings", {room_password: "", e2e_phrase: ""});
+for (const k of ["audio", "chat", "alice", "obey_new"]) $(k).onchange = e => { touched[k] = true; post("/api/settings", {[k]: e.target.checked}, k); };
+$("volume").oninput = e => { touched.volume = true; $("volv").textContent = e.target.value + " %"; };
+$("volume").onchange = e => post("/api/settings", {volume: +e.target.value}, "volume");
+$("name").oninput = () => { touched.name = true; };
+
+$("signin").onclick = async () => {
+  $("acctnote").textContent = "";
+  const body = {login: $("login").value, password: $("password").value};
+  // ссылка, только что вставленная в поле, ещё не сохранена: сохраняем, чтобы колонка знала сервер
+  if ($("link").value.trim() && !(await post("/api/settings", {link: $("link").value.trim()}))) return;
+  try { show(await api("/api/account", body)); $("password").value = ""; $("link").value = ""; }
+  catch (e) { $("acctnote").textContent = e.message; }
+};
+$("signout").onclick = () => post("/api/account", {logout: true});
+
+$("say").onclick = async () => {
+  const text = $("text").value.trim();
+  if (!text) return;
+  try { await api("/api/say", {text}); $("text").value = ""; $("saynote").textContent = "отправлено"; }
+  catch (e) { $("saynote").textContent = e.message; }
+};
+$("text").onkeydown = e => { if (e.key === "Enter") $("say").click(); };
+
+refresh();
+setInterval(refresh, 2000);
+</script>
+</body>
+</html>

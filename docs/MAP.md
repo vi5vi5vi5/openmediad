@@ -77,7 +77,8 @@ openmediad/
 │   │   ├── debug-profiler/      Профилировщик pprof (требует debug-page)
 │   │   ├── bt-out/              Bluetooth-наушники: вывод звука
 │   │   ├── bt-in/               Bluetooth: звук с телефона через движок
-│   │   └── spotify-soloist/     Spotify Connect через Soloist (+ shim/ на C, assets/ с готовым шимом)
+│   │   ├── spotify-soloist/     Spotify Connect через Soloist (+ shim/ на C, assets/ с готовым шимом)
+│   │   └── meetup/              Колонка в конференции MeetUp: звук в комнату, команды из чата (+ proto/)
 │   │
 │   ├── libs/                    ══ ОБЩЕЕ ДЛЯ КОМПОНЕНТОВ: не ядро, но нужно нескольким компонентам ══
 │   │   ├── gstreamer/           запуск встроенного GStreamer колонки         → yandex-music, system-sounds
@@ -89,7 +90,7 @@ openmediad/
 │   │   ├── ringled/             кольцо подсветки логотипа (/dev/fb0) и хранитель кадра → led-ring
 │   │   ├── clockled/            дисплей с часами (sysfs), анимации прошивки .binscled.zst, проигрыватель → led-ring
 │   │   ├── resample/            передискретизация PCM (44,1 → 48 кГц)         → spotify-soloist
-│   │   ├── wsclient/            клиент WebSocket (RFC 6455)                  → spotify-soloist
+│   │   ├── wsclient/            клиент WebSocket (RFC 6455), в том числе TLS  → spotify-soloist, meetup
 │   │   ├── debpkg/              файлы из пакета .deb (ar + xz/gz)            → spotify-soloist
 │   │   └── volmap/              таблица громкости платформы (уровень ↔ Master) → bt-out, spotify-soloist
 │   │
@@ -155,6 +156,7 @@ openmediad/
 | `bt-out` | Bluetooth-наушники (вывод) | необязательный, опытный | нет | BlueZ, `aplay`, `/dev/input`, `aliced` | `omd_bt_out` |
 | `bt-in` | Bluetooth: звук с телефона | необязательный, опытный | нет | BlueZ, `arecord`, `bluealsa-aplay` | `omd_bt_in` |
 | `spotify-soloist` | Spotify (Soloist) | необязательный, опытный | нет | `aplay`, сеть, `abi.cp15_barrier = 2` (ставит сам), ключ Soloist | `omd_spotify_soloist` |
+| `meetup` | Конференция MeetUp | необязательный, опытный | нет | сеть, сертификаты, `aliced` | `omd_meetup` |
 
 Классы: **необходимый** — то, ради чего проект существует; **штатный** — повторяет штатное поведение колонки; **вспомогательный** — для людей,
 не для звука; **необязательный** — новая возможность сверх штатной колонки. Любой компонент можно не включать в сборку — что он делал, играет
@@ -214,6 +216,7 @@ Go-декодер — ≈3 МБ и ≈25 мс на секунду звука (HI
 | **`openmediad install`** | `core/cli/install.go` → `platform/install` → `platform/initd` (`guard.sh`, `initd.sh`) → `cli/start.go` → `guard.sh` → `platform/stock` `Rerouter` |
 | **`openmediad bt pair …`** | `libs/bt-command` → `libs/bluez` → `libs/dbus` → шина D-Bus → BlueZ. **Демон не участвует** |
 | **Наушники в демоне** | `components/bt-out` → `libs/bluez` / `libs/dbus` (слежение) → `mixer.go` → `speaker/aplay` → `aplay` в PCM BlueALSA; `daemon/components.go` `attach` → `router.add` |
+| **Музыка в конференцию MeetUp** | `[route]` → `daemon/router.go` → `components/meetup` `Open` → `mixer.go` (моно, кадр 20 мс) → `component.go` `frame` (кодер Opus) → `sendLoop` → `meetup/proto` → `libs/wsclient` → сервер MeetUp. Обратно: чат → `proto.Session.Run` → `bot.go` → `control.Hub` или фраза Алисе (`alicedclient`) |
 
 ---
 
@@ -234,6 +237,7 @@ Go-декодер — ≈3 МБ и ≈25 мс на секунду звука (HI
 | громкость и приглушение | `core/audio/gain.go`, `core/engine`, `[focus]` (приглушение ведёт ядро: `daemon/app.go`, `Machine.MusicGain`); наушники — `components/bt-out/{volume,hold}.go`; громкость ответов Алисы — `components/alice-voice/answervol.go` |
 | команды плееру и события | `core/control` (`hub.go`, `visuals.go`), пульт платформы — `daemon/remote.go`, сокет — `daemon/api.go` |
 | отладочная страница | `components/debug-page/{page.html,server.go}` |
+| конференция MeetUp: команды чата, страница настроек, протокол | `components/meetup/{bot.go,web.go,page.html}`, `components/meetup/proto` |
 | убрать Bluetooth совсем | удалить `components/bt-out`, `components/bt-in`, `libs/{bluez,dbus,bt-command}`, их `include_*.go` и записи в каталоге; больше нигде Bluetooth не упоминается |
 
 ---

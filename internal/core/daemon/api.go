@@ -94,7 +94,7 @@ func (d *daemon) apiPlaying() ctlsock.Playing {
 	for _, p := range d.hub.Players() {
 		st := p.State
 		out.Players = append(out.Players, ctlsock.PlayerState{Name: p.Name, Ready: st.Ready, Playing: st.Playing, Sounding: st.Sounding,
-			Paused: st.Paused, Resumable: st.Resumable, Track: st.Track, NearEnd: st.NearEnd})
+			Paused: st.Paused, Resumable: st.Resumable, Track: st.Track, Title: st.Title, NearEnd: st.NearEnd})
 	}
 	d.mu.Lock()
 	ready := d.comps != nil // пока компоненты подключаются, автомат собирается: его поля не читаем

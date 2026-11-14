@@ -52,8 +52,17 @@ func (c *Component) State() playctl.State {
 		Resumable: ps.Status == "paused" && ps.Active,
 		Paused:    ps.Status == "paused",
 		Track:     ps.URI,
+		Title:     trackTitle(ps.Artist, ps.Title),
 		NearEnd:   ps.DurationMS > 0 && pos >= ps.DurationMS-nearEnd.Milliseconds(),
 	}
+}
+
+// trackTitle — название трека для человека: «исполнитель — название» (чего нет, то пропускается).
+func trackTitle(artist, title string) string {
+	if artist == "" || title == "" {
+		return artist + title
+	}
+	return artist + " — " + title
 }
 
 // nearEnd — за сколько до конца трек считается доигрываемым: следующий после него начался сам, а не перемоткой.

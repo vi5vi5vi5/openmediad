@@ -28,6 +28,7 @@ type PlayerState struct {
 	Paused    bool   `json:"paused"`             // на паузе
 	Resumable bool   `json:"resumable"`          // на паузе, и «продолжи» достанется ему
 	Track     string `json:"track,omitempty"`    // что-то, что меняется вместе с треком
+	Title     string `json:"title,omitempty"`    // название трека для человека, если плеер его знает
 	NearEnd   bool   `json:"near_end,omitempty"` // трек доигрывается
 }
 

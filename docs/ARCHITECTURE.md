@@ -81,6 +81,7 @@
 | `debug-page`, `debug-profiler` | отладочный веб-порт; профилировщик на нём |
 | `bt-out`, `bt-in` | Bluetooth-наушники (вывод) и звук с телефона (ввод) |
 | `spotify-soloist` | Spotify Connect через Soloist: процесс под надзором, шим `libpulse` → сокет → поток движка, WebSocket API, установка (`openmediad spotify`) |
+| `meetup` | колонка как участник конференции MeetUp: выход звука `meetup` (смеситель → кодер Opus → WebSocket), команды из чата, страница настроек, `openmediad meetup`; подпакет `proto/` |
 | `catalog` | **единая таблица паспортов** (не компонент) |
 | `included` | какие компоненты войдут в бинарник по тегам сборки (не компонент) |
 
@@ -88,7 +89,7 @@
 
 `gstreamer` (запуск `maind --gst-launch` со сторожем), `dbus` (свой клиент системной шины), `bluez` (BlueZ и BlueALSA), `bt-command` (команда
 `openmediad bt`), `alsactl` (громкость Master и статус PCM), `pcmstream` (звук чужого
-процесса как источник движка), `wsclient` (WebSocket), `debpkg` (файлы из .deb).
+процесса как источник движка), `wsclient` (WebSocket, в том числе поверх TLS), `debpkg` (файлы из .deb).
 
 ### Правила зависимостей
 

@@ -97,6 +97,9 @@ func printPlaying(c *Ctx, p ctlsock.Playing) {
 		case pl.Ready:
 			state = "готов, молчит"
 		}
+		if pl.Title != "" && (pl.Playing || pl.Paused) {
+			state += " · " + pl.Title
+		}
 		c.Printf("%-18s %s\n", pl.Name+":", state)
 	}
 	if len(p.Players) == 0 {
