@@ -1,5 +1,5 @@
-// Package gstreamer — запуск встроенного GStreamer колонки (`maind --gst-launch`) для декодирования: AAC потоков Яндекса, MP3
-// звонков и всего, что умеет decodebin прошивки.
+// Package gstreamer — запуск встроенного GStreamer колонки (`maind --gst-launch`) для декодирования: AAC потоков Яндекса и
+// радиостанций, MP3 звонков и всего, что умеет decodebin прошивки.
 //
 // Что надо знать о GStreamer колонки (docs/research/HISTORY.md, разделы 13–17):
 //   - есть fdsrc fdsink filesrc filesink decodebin qtdemux aacparse avdec_aac mpegaudioparse avdec_mp3 souphttpsrc queue

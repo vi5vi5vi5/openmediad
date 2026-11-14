@@ -36,9 +36,10 @@ type Track struct {
 
 // Deps — внешние зависимости источника (подменяются в тестах).
 type Deps struct {
-	Client     *http.Client
-	NewDecoder aac.Factory
-	Logf       func(string, ...any)
+	Client        *http.Client
+	NewDecoder    aac.Factory // декодер AAC
+	NewMP3Decoder aac.Factory // декодер MP3: нужен только радиостанциям, вещающим в MP3
+	Logf          func(string, ...any)
 }
 
 // Source — один трек Яндекса как источник движка. Сессия = (декодер, буфер, скачивание) с позиции; перемотка бросает

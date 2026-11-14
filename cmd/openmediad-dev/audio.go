@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"sync/atomic"
 	"time"
 
 	"openmediad/internal/components/yandex-music"
@@ -19,8 +20,8 @@ func audioCommands() []command {
 	return []command{
 		{"voice-play", "[-aplay путь] [-dev default] [-start-delay 1] [-prespawn] [-repeat N] [-chunk N] [-decode-only] файл.ogg",
 			"на колонке: проиграть чанк голоса связкой «Go-декодер → pipe → aplay» и замерить задержку до запуска PCM", voicePlay},
-		{"play-yandex", "-url URL -key HEX [-from мс] [-for 15s] [-gain дБ]",
-			"на колонке: один поток Яндекса через движок (HTTPS, AES, MP4, GStreamer, aplay) без шины и Алисы", playYandex},
+		{"play-yandex", "-url URL [-key HEX] [-from мс] [-for 15s] [-gain дБ] [-silent]",
+			"на колонке: один поток Яндекса через движок (HTTPS, AES, MP4, GStreamer, aplay) без шины и Алисы; без ключа и со ссылкой на .m3u8 — радио (HLS); -silent — без звука: PCM считается и выбрасывается", playYandex},
 	}
 }
 
@@ -43,15 +44,29 @@ func playYandex(args []string) error {
 	from := fs.Uint64("from", 0, "начать с позиции, мс")
 	dur := fs.Duration("for", 15*time.Second, "сколько играть")
 	gain := fs.Float64("gain", 0, "поправка громкости трека, дБ (нормализация: −14 − громкость трека)")
+	silent := fs.Bool("silent", false, "не играть в динамики: считать PCM в темпе воспроизведения и выбрасывать (проверка без звука)")
 	fs.Parse(args)
 	k, err := hex.DecodeString(*key)
-	if err != nil || len(k) != 16 || *url == "" {
+	radio := *key == "" && yandexmusic.IsRadio(yandexmusic.Track{URL: *url})
+	if err != nil || len(k) != 16 && !radio || *url == "" {
 		return usageError("play-yandex")
 	}
 	t0 := time.Now()
 	logf := func(f string, a ...any) { fmt.Printf("+%6.3fs %s\n", time.Since(t0).Seconds(), fmt.Sprintf(f, a...)) }
 	spk := &speaker.Sink{}
-	eng := &engine.Engine{Router: engine.RouterFunc(func(_ engine.Class, f audio.Format) (audio.Output, error) { return spk.Open(f) }), Logf: logf}
+	null := &nullOutput{}
+	if *silent {
+		defer func() {
+			logf("без звука: принято %d мс PCM, пик %d из 32767", null.ms(), null.peak.Load())
+		}()
+	}
+	eng := &engine.Engine{Router: engine.RouterFunc(func(_ engine.Class, f audio.Format) (audio.Output, error) {
+		if *silent {
+			null.f = f
+			return null, nil
+		}
+		return spk.Open(f)
+	}), Logf: logf}
 	ev := &musicEvents{logf: logf, opened: make(chan uint64, 1), failed: make(chan error, 1), finished: make(chan struct{}, 1)}
 	b := &yandexmusic.Backend{Engine: eng, Events: ev, Logf: logf}
 	defer b.Shutdown()
@@ -88,6 +103,38 @@ func playYandex(args []string) error {
 			logf("звук пошёл через %s после Start", time.Since(start).Round(time.Millisecond))
 		}
 	}
+}
+
+// nullOutput — вывод «в никуда» в темпе воспроизведения: считает принятый звук и его пик. Для проверок без звука.
+type nullOutput struct {
+	f     audio.Format
+	bytes atomic.Uint64
+	peak  atomic.Int32
+}
+
+func (n *nullOutput) Write(p []byte) (int, error) {
+	var peak int32
+	for i := 0; i+1 < len(p); i += 2 {
+		v := int32(int16(uint16(p[i]) | uint16(p[i+1])<<8))
+		if v < 0 {
+			v = -v
+		}
+		peak = max(peak, v)
+	}
+	if peak > n.peak.Load() {
+		n.peak.Store(peak)
+	}
+	n.bytes.Add(uint64(len(p)))
+	time.Sleep(n.f.Duration(uint64(len(p))))
+	return len(p), nil
+}
+func (n *nullOutput) Drain() {}
+func (n *nullOutput) Abort() {}
+func (n *nullOutput) ms() int64 {
+	if n.f.Rate == 0 {
+		return 0
+	}
+	return n.f.Duration(n.bytes.Load()).Milliseconds()
 }
 
 func rssKB() int {

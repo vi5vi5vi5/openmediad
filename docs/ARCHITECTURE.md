@@ -74,7 +74,7 @@
 
 | Папка | Что внутри |
 |---|---|
-| `yandex-music` | музыка Яндекса: `fetch.go` (HTTPS, AES), `source.go`, `bind.go` (привязка к автомату mediad), `register.go`; подпакеты `mp4/`, `aac/` |
+| `yandex-music` | музыка Яндекса: `fetch.go` (HTTPS, AES), `source.go`, `radio.go` (радиостанции: живой поток HLS), `bind.go` (привязка к автомату mediad), `register.go`; подпакеты `mp4/`, `aac/` |
 | `alice-voice` | голос Алисы: `source.go`, `bind.go`, `register.go`; подпакеты `ogg/`, `opus/` |
 | `system-sounds` | звонки и системные звуки: `library.go`, `source.go`, `bind.go`, `path.go`, `register.go`; подпакет `mp3/` |
 | `display-spectrum` | сообщения спектра и клиент iohub |
@@ -89,7 +89,7 @@
 
 `gstreamer` (запуск `maind --gst-launch` со сторожем), `dbus` (свой клиент системной шины), `bluez` (BlueZ и BlueALSA), `bt-command` (команда
 `openmediad bt`), `alsactl` (громкость Master и статус PCM), `pcmstream` (звук чужого
-процесса как источник движка), `wsclient` (WebSocket, в том числе поверх TLS), `debpkg` (файлы из .deb).
+процесса как источник движка), `wsclient` (WebSocket, в том числе поверх TLS), `debpkg` (файлы из .deb), `hls` (приём звукового потока HLS: радио).
 
 ### Правила зависимостей
 

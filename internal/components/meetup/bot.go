@@ -254,8 +254,9 @@ func (c *Component) cmdVolume(arg string) string {
 func (c *Component) cmdNowPlaying(string) string {
 	if c.mach != nil && c.mach.Playing() {
 		for _, p := range c.mach.Snapshot() {
-			if p.Title != "" {
-				return "Сейчас играет: " + p.Title
+			// у радио исполнителя нет, и название приходит как « — Серебряный дождь»
+			if title := strings.TrimLeft(p.Title, " —-"); title != "" {
+				return "Сейчас играет: " + title
 			}
 		}
 		return "Сейчас играет музыка платформы."

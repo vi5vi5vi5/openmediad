@@ -205,7 +205,7 @@ func TestOpenedBeforeStartIsBackpressured(t *testing.T) {
 		t.Fatal("до Start звук выводиться не должен")
 	}
 	tr := h.b.get("p1")
-	if got := tr.src.sess.ring.Len(); got < openLevel || got > ringBytes {
+	if got := tr.src.(*Source).sess.ring.Len(); got < openLevel || got > ringBytes {
 		t.Fatalf("в буфере %d байт, ждали от %d до %d", got, openLevel, ringBytes)
 	}
 }

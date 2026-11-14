@@ -38,14 +38,15 @@ type MusicEvents interface {
 
 // Backend — плееры музыки Яндекса поверх движка.
 type Backend struct {
-	Engine     *engine.Engine
-	Events     MusicEvents
-	Client     *http.Client // nil — клиент с сертификатами прошивки (NewClient)
-	NewDecoder aac.Factory  // nil — GStreamer колонки
-	Logf       func(string, ...any)
-	NoFadeIn   bool          // для тестов, которые читают отсчёты как метки
-	NoRewind   bool          // для тестов с мгновенным выводом: возврат звука по часам там неприменим
-	LED        led.Indicator // необязательно: подсветка показывает, что музыку играет Яндекс
+	Engine        *engine.Engine
+	Events        MusicEvents
+	Client        *http.Client // nil — клиент с сертификатами прошивки (NewClient)
+	NewDecoder    aac.Factory  // nil — GStreamer колонки
+	NewMP3Decoder aac.Factory  // nil — GStreamer колонки (радиостанции в MP3)
+	Logf          func(string, ...any)
+	NoFadeIn      bool          // для тестов, которые читают отсчёты как метки
+	NoRewind      bool          // для тестов с мгновенным выводом: возврат звука по часам там неприменим
+	LED           led.Indicator // необязательно: подсветка показывает, что музыку играет Яндекс
 
 	mu      sync.Mutex
 	players map[string]*player
@@ -83,8 +84,16 @@ func (b *Backend) mark(p *player, on bool) {
 type player struct {
 	id     string // текущий id плеера: после Adopt меняется
 	st     *engine.Stream
-	src    *Source
+	src    trackSource
+	title  string
 	gainDB float64
+}
+
+// trackSource — источник плеера: трек (Source) или радиостанция (RadioSource).
+type trackSource interface {
+	engine.Source
+	Net() (got, total uint64)
+	Buffered() time.Duration
 }
 
 var _ mediad.Backend = (*Backend)(nil)
@@ -124,9 +133,15 @@ func (b *Backend) Open(id string, t mediad.Track, offsetMs uint64) {
 		}
 		return
 	}
-	src := New(Track{ID: t.ID, URL: t.URL, Alts: t.Alts, Key: t.Key, Title: t.Title}, offsetMs,
-		Deps{Client: b.Client, NewDecoder: b.NewDecoder, Logf: b.Logf})
-	p := &player{id: id, src: src, gainDB: t.GainDB}
+	track := Track{ID: t.ID, URL: t.URL, Alts: t.Alts, Key: t.Key, Title: t.Title}
+	deps := Deps{Client: b.Client, NewDecoder: b.NewDecoder, NewMP3Decoder: b.NewMP3Decoder, Logf: b.Logf}
+	var src trackSource
+	if IsRadio(track) { // радиостанция: живой поток HLS без ключа
+		src = NewRadio(track, deps)
+	} else {
+		src = New(track, offsetMs, deps)
+	}
+	p := &player{id: id, src: src, title: t.Title, gainDB: t.GainDB}
 	opt := engine.Options{Gain: audio.DB(t.GainDB), Spectrum: spectrum.SourceMusic, RewindOnPause: !b.NoRewind, PosLatency: posLatency}
 	if !b.NoFadeIn {
 		opt.FadeIn = fadeIn
@@ -250,7 +265,7 @@ func (b *Backend) Snapshot() []TrackInfo {
 	for _, p := range ps {
 		_, opened := p.st.Ready()
 		got, tot := p.src.Net()
-		out = append(out, TrackInfo{ID: short(b.currentID(p)), Title: p.src.t.Title, Playing: p.st.Playing(), Opened: opened,
+		out = append(out, TrackInfo{ID: short(b.currentID(p)), Title: p.title, Playing: p.st.Playing(), Opened: opened,
 			PosMs: uint64(p.st.Pos() / time.Millisecond), GotKB: got >> 10, TotalKB: tot >> 10,
 			RingMs: int64(p.src.Buffered() / time.Millisecond), NormDB: p.gainDB})
 	}

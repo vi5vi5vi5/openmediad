@@ -6,6 +6,6 @@
 |---|---|
 | `main.go` | таблица команд и диспетчер |
 | `bus.go` | `observe`, `pcap`, `timeline`, `shimcheck`, `pcmwatch`, `sanitize` |
-| `audio.go`, `voiceplay_*.go` | `play-yandex` (поток Яндекса через движок без шины), `voice-play` (задержка «чанк голоса → aplay») |
+| `audio.go`, `voiceplay_*.go` | `play-yandex` (поток Яндекса или радио через движок без шины; `-silent` — без звука), `voice-play` (задержка «чанк голоса → aplay») |
 | `mixer.go` | `mixer` — регулятор ALSA без `amixer` |
 | `exp_btidle.go` | `bt-idle` — одноразовый опыт с D-Bus (история — docs/research/HISTORY.md) |

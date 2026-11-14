@@ -23,10 +23,10 @@ func need(id, text string) registry.Need { return registry.Need{ID: id, Text: te
 var All = []registry.Info{
 	{
 		Name: "yandex-music", Title: "Музыка Яндекса", Section: "yandex-music", Kind: registry.Source, Class: registry.Standard,
-		Summary: "играет музыку Яндекса из команд платформы сам: HTTPS, расшифровка, перемотка, спектр для дисплея",
+		Summary: "играет музыку Яндекса и радиостанции из команд платформы сам: HTTPS, расшифровка, перемотка, живые потоки HLS, спектр для дисплея",
 		Default: true, Ready: true,
 		Needs: []registry.Need{
-			need(registry.NeedGStreamer, "GStreamer колонки (`maind --gst-launch`): декодирует AAC"),
+			need(registry.NeedGStreamer, "GStreamer колонки (`maind --gst-launch`): декодирует AAC (и MP3 у радиостанций)"),
 			need(registry.NeedAplay, "системный `aplay`: вывод звука"),
 			need(registry.NeedCA, "корневые сертификаты прошивки `/system/vendor/quasar/ca-certificates.crt` (запасной набор)"),
 			need(registry.NeedNetwork, "сеть (HTTPS до серверов Яндекса)"),

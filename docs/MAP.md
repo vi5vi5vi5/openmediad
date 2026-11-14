@@ -69,7 +69,7 @@ openmediad/
 │   ├── components/              ══ КОМПОНЕНТЫ: опциональные возможности, у каждого паспорт ══
 │   │   ├── catalog/             ЕДИНАЯ ТАБЛИЦА паспортов (не компонент)
 │   │   ├── included/            include_<имя>.go: что войдёт в бинарник по тегам сборки (не компонент)
-│   │   ├── yandex-music/        Музыка Яндекса           (+ mp4/, aac/)
+│   │   ├── yandex-music/        Музыка Яндекса и радио   (+ mp4/, aac/)
 │   │   ├── alice-voice/         Голос Алисы              (+ ogg/, opus/)
 │   │   ├── system-sounds/       Звонки и системные звуки (+ mp3/)
 │   │   ├── display-spectrum/    Спектр для дисплея и подсветки
@@ -86,6 +86,7 @@ openmediad/
 │   │   ├── bluez/               BlueZ и BlueALSA: устройства, спаривание     → bt-out, bt-in, bt-command
 │   │   ├── bt-command/          команда терминала `openmediad bt`            → приходит с bt-out или bt-in
 │   │   ├── alsactl/             регулятор громкости ALSA и статус PCM        → bt-out, devtools
+│   │   ├── hls/                 приём звукового потока HLS: плейлисты, сегменты, MPEG-TS → yandex-music (радио)
 │   │   ├── pcmstream/           звук от чужого процесса как источник движка  → spotify-soloist (и будущие движки Spotify)
 │   │   ├── ringled/             кольцо подсветки логотипа (/dev/fb0) и хранитель кадра → led-ring
 │   │   ├── clockled/            дисплей с часами (sysfs), анимации прошивки .binscled.zst, проигрыватель → led-ring
@@ -210,6 +211,7 @@ Go-декодер — ≈3 МБ и ≈25 мс на секунду звука (HI
 | Сценарий | Путь |
 |---|---|
 | **«Алиса, включи музыку»** | платформа → iptables → `core/quasar/shim` → `daemon/intercept.go` → `quasar/mediad` (`machine.go` → `audio.go` `Play`) → `components/yandex-music/bind.go` `Open` → `source.go` + `fetch.go` (HTTPS, AES) → `mp4` + `aac` + `libs/gstreamer` (декодер) → `core/engine` (`stream.go`, `loop.go`) → `daemon/router.go` → `core/speaker` → `speaker/aplay` → `aplay`. Обратно: события `mediad` → `Proxy.Broadcast`. Параллельно спектр: `engine` → `display-spectrum` → порт 9903 |
+| **«Алиса, включи радио»** | та же команда плеера музыки, но в ней ссылка на плейлист HLS без ключа: `components/yandex-music/bind.go` `Open` → `radio.go` `RadioSource` → `libs/hls` (плейлист, сегменты MPEG-TS, извлечение AAC) → `libs/gstreamer` (декодер) → `core/engine` → выход по `[route]`. Не открылось до первого звука — команда уходит штатному `mediad` |
 | **Голос Алисы** | `quasar/mediad/voice.go` → `components/alice-voice/bind.go` → `source.go` → `ogg` + `opus` → `engine` (класс `voice`) |
 | **Звонок таймера** | `quasar/mediad/file.go` → `components/system-sounds/bind.go` → `library.go` (GStreamer) → `source.go` (по кругу) → `engine` (класс `alert`) |
 | **`openmediad config set …`** | `core/cli/config.go` → `cli/command` `SetConfig` → `core/config/edit.go` → `ctlsock` `reload` → `daemon/control.go` |
