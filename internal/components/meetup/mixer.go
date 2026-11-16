@@ -20,7 +20,8 @@ import (
 
 const (
 	frameDur     = 20 * time.Millisecond
-	mixInputSize = 48000 * 2 / 10 // буфер каждого потока: 100 мс моно S16
+	mixChannels  = 2                            // смеситель всегда стерео: моно-потоки раздваиваются, в моно сводит уже кодер (component.frame)
+	mixInputSize = 48000 * 2 * mixChannels / 10 // буфер каждого потока: 100 мс стерео S16
 	maxLag       = 200 * time.Millisecond
 )
 
@@ -28,7 +29,8 @@ const (
 var errKicked = errors.New("конференция MeetUp недоступна")
 
 type mixer struct {
-	// out получает каждый смешанный кадр (960 отсчётов моно); silent — кадр из одних нулей. Зовётся из горутины смесителя.
+	// out получает каждый смешанный кадр (960 отсчётов стерео: левый и правый вперемежку, 1920 чисел); silent — кадр из одних
+	// нулей. Зовётся из горутины смесителя.
 	out func(pcm []int16, silent bool)
 
 	gain atomic.Int32 // усиление в 1/1024
@@ -53,8 +55,8 @@ func (m *mixer) setGain(g float64) { m.gain.Store(int32(g*1024 + 0.5)) }
 
 func (m *mixer) loop() {
 	defer close(m.done)
-	acc := make([]int32, proto.FrameSamples)
-	pcm := make([]int16, proto.FrameSamples)
+	acc := make([]int32, proto.FrameSamples*mixChannels)
+	pcm := make([]int16, proto.FrameSamples*mixChannels)
 	next := time.Now()
 	for {
 		m.mu.Lock()
@@ -169,7 +171,7 @@ const (
 type mixInput struct {
 	m      *mixer
 	stereo bool
-	buf    []byte // моно S16LE
+	buf    []byte // стерео S16LE
 	state  int
 	odd    []byte // неполный отсчёт с прошлой записи (движок пишет целыми отсчётами, но договор Output этого не обещает)
 }
@@ -195,20 +197,18 @@ func (in *mixInput) Write(p []byte) (int, error) {
 		if m.closed || in.state == inAborted || in.state == inDone {
 			return 0, errKicked
 		}
-		room := (mixInputSize - len(in.buf)) / 2 // сколько отсчётов поместится
+		room := (mixInputSize - len(in.buf)) / (2 * mixChannels) // сколько отсчётов поместится
 		if room <= 0 {
 			m.cond.Wait()
 			continue
 		}
 		n := min(room, len(data)/frame)
-		if in.stereo { // стерео → моно: полусумма каналов
+		if in.stereo {
+			in.buf = append(in.buf, data[:4*n]...)
+		} else { // моно → стерео: тот же отсчёт в оба канала
 			for i := 0; i < n; i++ {
-				l := int32(int16(binary.LittleEndian.Uint16(data[4*i:])))
-				r := int32(int16(binary.LittleEndian.Uint16(data[4*i+2:])))
-				in.buf = binary.LittleEndian.AppendUint16(in.buf, uint16(int16((l+r)/2)))
+				in.buf = append(in.buf, data[2*i], data[2*i+1], data[2*i], data[2*i+1])
 			}
-		} else {
-			in.buf = append(in.buf, data[:2*n]...)
 		}
 		data = data[n*frame:]
 	}

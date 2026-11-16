@@ -98,6 +98,14 @@ func TestJoinChatStateAudio(t *testing.T) {
 	if j["room"] != "room1" || j["name"] != "Колонка" || j["mic"] != false || j["cam"] != false {
 		t.Fatalf("join: %v", j)
 	}
+	// колонка представляется программой и просит не слать ей чужие потоки
+	rv, _ := j["recv"].(map[string]any)
+	if j["kind"] != "bot" || len(rv) != 4 || rv["audio"] != false || rv["camera"] != false || rv["screen"] != false || rv["screen_audio"] != false {
+		t.Fatalf("join без подписки «только чат» или пометки бота: %v", j)
+	}
+	if !s.Subscribed() || !s.Wanted() {
+		t.Fatalf("после входа: подписка %v, спрос %v", s.Subscribed(), s.Wanted())
+	}
 	if s.ID() != 7 {
 		t.Fatalf("наш id %d", s.ID())
 	}
@@ -113,11 +121,16 @@ func TestJoinChatStateAudio(t *testing.T) {
 		done <- s.Run(proto.Handler{Chat: func(c proto.Chat) { chats <- c }, Roster: func() { roster <- struct{}{} }, Notice: func(r string) { notices <- r }})
 	}()
 
-	// чужое сообщение, зашифрованное сообщение, наше собственное (сервер возвращает его и отправителю)
+	// спрос: слушателей нет — сессия это знает уже к следующему сообщению (сервер шлёт их по порядку)
+	srv.Broadcast(map[string]any{"type": "demand", "audio": false, "camera": false})
 	srv.Say(3, "Анна", "!next")
 	if c := recv(t, chats, "чат"); c.Text != "!next" || c.Sender != "Анна" || c.SenderID != 3 || c.Own || c.Encrypted {
 		t.Fatalf("чат: %+v", c)
 	}
+	if s.Wanted() {
+		t.Fatal("сервер сказал, что слушать некому, а сессия считает, что звук нужен")
+	}
+	srv.Broadcast(map[string]any{"type": "demand", "audio": true})
 	srv.Say(3, "Анна", proto.ChatCipherPrefix+"AAAA")
 	if c := recv(t, chats, "шифрованный чат"); !c.Encrypted {
 		t.Fatalf("шифрованное сообщение не распознано: %+v", c)

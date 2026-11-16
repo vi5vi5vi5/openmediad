@@ -301,7 +301,7 @@ func (s *Server) text(c *conn, raw []byte) {
 			return
 		}
 		// В истории лежит команда: клиент не должен исполнять то, что было сказано до его входа.
-		c.json(map[string]any{"type": "join_ok", "sender_id": c.id,
+		c.json(map[string]any{"type": "join_ok", "sender_id": c.id, "features": []string{"recv", "demand", "kind"},
 			"participants": []map[string]any{{"id": 3, "name": "Анна", "mic": true, "cam": false, "user_id": 5, "avatar": 2}},
 			"history": []map[string]any{{"sender_id": 3, "sender_name": "Анна", "text": "!pause", "timestamp_ms": 1751970000000,
 				"image": strings.Repeat("A", 4096)}}})

@@ -24,7 +24,8 @@ const (
 	frameHeader   = 11
 )
 
-// FrameSamples — отсчётов в одном звуковом кадре: Opus, 48 кГц, моно, 20 мс (§5.5). Клиенты принимают только такие кадры.
+// FrameSamples — отсчётов НА КАНАЛ в одном звуковом кадре: Opus, 48 кГц, 20 мс (§5.5). Клиенты принимают только такие
+// кадры. Моно это или стерео, записано в самом пакете Opus.
 const FrameSamples = 960
 
 // ChatCipherPrefix — так начинается сообщение чата, зашифрованное сквозным шифрованием (§7.3).
@@ -88,6 +89,8 @@ type Participant struct {
 	Cam  bool   `json:"cam"`
 	// UserID — аккаунт участника на сервере; 0 — вошёл без аккаунта (имя такого участника никем не подтверждено).
 	UserID int64 `json:"user_id,omitempty"`
+	// Kind — кто это: "" — человек, "bot" — программа (другая колонка, музыкальный бот).
+	Kind string `json:"kind,omitempty"`
 }
 
 // Chat — сообщение чата, пришедшее во время конференции (история из join_ok сюда не попадает).
@@ -135,6 +138,9 @@ type Session struct {
 	title  string
 
 	rttMS atomic.Int64 // последний замер «туда и обратно», мс; −1 — ещё не мерили
+
+	recv     bool        // сервер понимает подписку: чужих потоков он нам не шлёт
+	noDemand atomic.Bool // сервер сказал, что наш звук сейчас некому слушать
 }
 
 // serverMsg — поля сообщений сервера (§4.2), которые читает клиент. Картинки и история чата не разбираются.
@@ -149,6 +155,9 @@ type serverMsg struct {
 	Mic          *bool         `json:"mic"`
 	Cam          *bool         `json:"cam"`
 	UserID       int64         `json:"user_id"`
+	Kind         string        `json:"kind"`
+	Features     []string      `json:"features"`
+	Audio        *bool         `json:"audio"`
 	Participants []Participant `json:"participants"`
 	RoomTitle    string        `json:"room_title"`
 	T            int64         `json:"t"`
@@ -178,7 +187,11 @@ func Join(ctx context.Context, l Link, o Options) (*Session, error) {
 		return nil, fmt.Errorf("нет связи с сервером %s: %w", l.Host, err)
 	}
 	// Вход с выключенными микрофоном и камерой (§4.1): микрофон «включается», когда колонке есть что играть.
-	msg := map[string]any{"type": "join", "room": l.Room, "name": name, "mic": false, "cam": false}
+	// Подписка «только чат» (§4.4): колонке чужой звук и видео не нужны, и сервер их не шлёт вовсе — сеть колонки занята
+	// только её собственной музыкой. Пометка kind говорит клиентам, что это программа: её рамку «говорит» они красят иначе
+	// и речь в её звуке не ищут. Сервер постарше оба поля пропустит — тогда чужие кадры читаются и выбрасываются (SkipBinary).
+	msg := map[string]any{"type": "join", "room": l.Room, "name": name, "mic": false, "cam": false, "kind": "bot",
+		"recv": map[string]bool{"audio": false, "camera": false, "screen": false, "screen_audio": false}}
 	if o.Password != "" {
 		msg["password"] = o.Password
 	}
@@ -202,6 +215,11 @@ func Join(ctx context.Context, l Link, o Options) (*Session, error) {
 		case "join_ok":
 			s := &Session{c: c, id: m.SenderID, cipher: o.Cipher, people: m.Participants, title: m.RoomTitle}
 			s.rttMS.Store(-1)
+			for _, f := range m.Features {
+				if f == "recv" {
+					s.recv = true
+				}
+			}
 			return s, nil
 		case "error":
 			c.Close()
@@ -232,6 +250,14 @@ func (s *Session) RTT() (time.Duration, bool) {
 	ms := s.rttMS.Load()
 	return time.Duration(ms) * time.Millisecond, ms >= 0
 }
+
+// Subscribed — сервер понимает подписку и чужих потоков нам не шлёт. false — сервер старой версии: чужие кадры приходят
+// и выбрасываются (см. Skipped).
+func (s *Session) Subscribed() bool { return s.recv }
+
+// Wanted — наш звук есть кому слушать. Сервер сообщает (demand, §4.4), когда слушателей нет: колонка одна в комнате или
+// все убрали её громкость в ноль. Тогда кодировать и слать незачем. Сервер без этой возможности молчит — считаем, что нужны.
+func (s *Session) Wanted() bool { return !s.noDemand.Load() }
 
 // Skipped — сколько двоичных кадров (звук и видео остальных участников) и байт прочитано и выброшено.
 func (s *Session) Skipped() (frames, bytes uint64) { return s.c.Skipped() }
@@ -268,7 +294,8 @@ func (s *Session) Run(h Handler) error {
 			}
 		case "participant_joined":
 			s.mu.Lock()
-			s.people = append(removeID(s.people, m.ID), Participant{ID: m.ID, Name: m.Name, Mic: m.Mic != nil && *m.Mic, Cam: m.Cam != nil && *m.Cam, UserID: m.UserID})
+			s.people = append(removeID(s.people, m.ID), Participant{ID: m.ID, Name: m.Name, Mic: m.Mic != nil && *m.Mic, Cam: m.Cam != nil && *m.Cam,
+				UserID: m.UserID, Kind: m.Kind})
 			s.mu.Unlock()
 			s.roster(h)
 		case "participant_left":
@@ -291,6 +318,8 @@ func (s *Session) Run(h Handler) error {
 			}
 			s.mu.Unlock()
 			s.roster(h)
+		case "demand": // спрос на наши полосы; отсутствующее поле — «нужна»
+			s.noDemand.Store(m.Audio != nil && !*m.Audio)
 		case "pong":
 			if d := time.Now().UnixMilli() - m.T; d >= 0 && d < int64(readTimeout/time.Millisecond) {
 				s.rttMS.Store(d)
@@ -363,7 +392,7 @@ func (s *Session) SetMic(on bool) error {
 	return s.c.WriteText(fmt.Sprintf(`{"type":"state","mic":%t}`, on))
 }
 
-// AudioFrame собирает двоичный кадр с одним пакетом Opus (48 кГц, моно, 20 мс) в buf и возвращает его. at — время кадра по
+// AudioFrame собирает двоичный кадр с одним пакетом Opus (48 кГц, моно или стерео, 20 мс) в buf и возвращает его. at — время кадра по
 // стенным часам (§5.3: одна шкала Date.now() для всех кадров отправителя). С шифром данные кадра шифруются, заголовок
 // остаётся открытым (§7.2).
 func AudioFrame(buf, opus []byte, at time.Time, c *Cipher) []byte {

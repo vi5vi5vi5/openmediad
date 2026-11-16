@@ -53,7 +53,7 @@ func newTestMixer(t *testing.T) (*mixer, *capture) {
 	return m, c
 }
 
-// Стерео сводится в моно полусуммой, громкость применяется к сумме, сумма потоков ограничивается без переполнения.
+// Стерео проходит как есть (каналы не смешиваются), громкость применяется к сумме, сумма потоков ограничивается без переполнения.
 func TestMixerDownmixGainClamp(t *testing.T) {
 	m, c := newTestMixer(t)
 	in, err := m.Open(audio.Stereo48)
@@ -63,8 +63,8 @@ func TestMixerDownmixGainClamp(t *testing.T) {
 	in.Write(samples(audio.Stereo48, proto.FrameSamples, 1000, 3000))
 	in.Drain()
 	f, silent := c.frame(0)
-	if len(f) != proto.FrameSamples || f[0] != 2000 || f[proto.FrameSamples-1] != 2000 || silent {
-		t.Fatalf("кадр: %d отсчётов, первый %d, тишина %v", len(f), f[0], silent)
+	if len(f) != 2*proto.FrameSamples || f[0] != 1000 || f[1] != 3000 || f[2*proto.FrameSamples-1] != 3000 || silent {
+		t.Fatalf("кадр: %d чисел, левый %d, правый %d, тишина %v", len(f), f[0], f[1], silent)
 	}
 
 	m.setGain(0.5)
@@ -151,8 +151,8 @@ func TestMixerOddWritesAndKick(t *testing.T) {
 			}
 		}
 	}
-	if got != proto.FrameSamples {
-		t.Fatalf("дошло отсчётов: %d из %d", got, proto.FrameSamples)
+	if got != 2*proto.FrameSamples { // моно-отсчёт уходит в оба канала
+		t.Fatalf("дошло чисел: %d из %d", got, 2*proto.FrameSamples)
 	}
 
 	in, _ = m.Open(audio.Stereo48)

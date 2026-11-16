@@ -75,6 +75,8 @@ type Component struct {
 	mix *mixer
 	// только горутина смесителя:
 	enc       *opus.Encoder
+	encCh     int     // на сколько каналов открыт кодер
+	mono      []int16 // кадр, сведённый в моно (когда stereo выключено)
 	encBuf    []byte
 	silentRun int
 	encStale  atomic.Bool // настройки кодера изменились: пересоздать
@@ -161,7 +163,7 @@ func (c *Component) OnArrival(f func()) {
 // LEDColor — цвет подсветки «музыка идёт в конференцию»: лаймовый, как акцент MeetUp.
 func (c *Component) LEDColor() led.Color { return led.Color{R: 170, G: 255, B: 0} }
 
-// frame получает от смесителя кадр 20 мс: кодирует и ставит в очередь к сети. Никогда не ждёт сеть.
+// frame получает от смесителя кадр 20 мс (стерео): кодирует и ставит в очередь к сети. Никогда не ждёт сеть.
 func (c *Component) frame(pcm []int16, silent bool) {
 	if silent {
 		if c.silentRun++; c.silentRun > silentTail {
@@ -171,18 +173,36 @@ func (c *Component) frame(pcm []int16, silent bool) {
 		c.silentRun = 0
 	}
 	c.mu.Lock()
-	q, cfg := c.queue, c.cfg
+	q, cfg, sess := c.queue, c.cfg, c.sess
 	c.mu.Unlock()
 	if q == nil { // переподключение: звук пропадает, поток движка идёт дальше
 		return
 	}
-	if c.enc == nil || c.encStale.Swap(false) {
-		enc, err := opus.NewEncoder(opus.EncoderConfig{SampleRate: audio.Rate, Channels: 1, Bitrate: cfg.Bitrate, Complexity: cfg.Complexity})
+	// Слушать некому (колонка одна в комнате, или у всех её громкость в нуле): сервер всё равно выбросил бы кадр, поэтому
+	// не тратим на него ни кодер, ни сеть. Музыка при этом идёт дальше в своём темпе.
+	if sess != nil && !sess.Wanted() {
+		return
+	}
+	ch := 1
+	if cfg.Stereo {
+		ch = 2
+	}
+	if c.enc == nil || c.encCh != ch || c.encStale.Swap(false) {
+		enc, err := opus.NewEncoder(opus.EncoderConfig{SampleRate: audio.Rate, Channels: ch, Bitrate: cfg.Bitrate, Complexity: cfg.Complexity})
 		if err != nil {
 			c.dropped.Add(1)
 			return
 		}
-		c.enc = enc
+		c.enc, c.encCh = enc, ch
+	}
+	if ch == 1 { // стерео → моно: полусумма каналов
+		if c.mono == nil {
+			c.mono = make([]int16, len(pcm)/2)
+		}
+		for i := range c.mono {
+			c.mono[i] = int16((int32(pcm[2*i]) + int32(pcm[2*i+1])) / 2)
+		}
+		pcm = c.mono
 	}
 	n, err := c.enc.Encode(pcm, c.encBuf)
 	if err != nil || n == 0 {
@@ -667,7 +687,7 @@ func (c *Component) Reload(cfg any) (restart []string) {
 	if n.WSURL != old.WSURL {
 		restart = append(restart, "ws_url")
 	}
-	if n.Bitrate != old.Bitrate || n.Complexity != old.Complexity {
+	if n.Bitrate != old.Bitrate || n.Complexity != old.Complexity || n.Stereo != old.Stereo {
 		c.encStale.Store(true)
 	}
 	return restart
