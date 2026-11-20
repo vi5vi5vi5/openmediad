@@ -11,8 +11,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"openmediad/internal/components/yandex-music/aac"
 	"openmediad/internal/core/audio"
+	"openmediad/internal/libs/aac"
 	"openmediad/internal/libs/gstreamer"
 	"openmediad/internal/libs/hls"
 )

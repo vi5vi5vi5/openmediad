@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/hex"
 	"flag"
 	"fmt"
@@ -8,8 +9,10 @@ import (
 	"sync/atomic"
 	"time"
 
+	"openmediad/internal/components/soundcloud"
 	"openmediad/internal/components/yandex-music"
 	"openmediad/internal/core/audio"
+	"openmediad/internal/core/control"
 	"openmediad/internal/core/engine"
 	"openmediad/internal/core/quasar/mediad"
 	"openmediad/internal/core/speaker"
@@ -22,6 +25,8 @@ func audioCommands() []command {
 			"на колонке: проиграть чанк голоса связкой «Go-декодер → pipe → aplay» и замерить задержку до запуска PCM", voicePlay},
 		{"play-yandex", "-url URL [-key HEX] [-from мс] [-for 15s] [-gain дБ] [-silent]",
 			"на колонке: один поток Яндекса через движок (HTTPS, AES, MP4, GStreamer, aplay) без шины и Алисы; без ключа и со ссылкой на .m3u8 — радио (HLS); -silent — без звука: PCM считается и выбрасывается", playYandex},
+		{"play-soundcloud", "-link ССЫЛКА [-proxy http://хост:порт] [-for 15s] [-silent]",
+			"на колонке: SoundCloud по ссылке через движок (client_id с сайта, HLS fMP4, GStreamer, aplay) без демона; -silent — без звука", playSoundCloud},
 	}
 }
 
@@ -101,6 +106,72 @@ func playYandex(args []string) error {
 		if !first && b.Pos("test") > *from {
 			first = true
 			logf("звук пошёл через %s после Start", time.Since(start).Round(time.Millisecond))
+		}
+	}
+}
+
+func playSoundCloud(args []string) error {
+	fs := flag.NewFlagSet("play-soundcloud", flag.ExitOnError)
+	link := fs.String("link", "", "ссылка на трек, плейлист, альбом или исполнителя SoundCloud")
+	proxy := fs.String("proxy", "", "прокси для SoundCloud (http://хост:порт, socks5://хост:порт)")
+	dur := fs.Duration("for", 15*time.Second, "сколько играть")
+	silent := fs.Bool("silent", false, "не играть в динамики: считать PCM в темпе воспроизведения и выбрасывать (проверка без звука)")
+	fs.Parse(args)
+	if *link == "" {
+		return usageError("play-soundcloud")
+	}
+	t0 := time.Now()
+	logf := func(f string, a ...any) { fmt.Printf("+%6.3fs %s\n", time.Since(t0).Seconds(), fmt.Sprintf(f, a...)) }
+	spk := &speaker.Sink{}
+	null := &nullOutput{}
+	if *silent {
+		defer func() {
+			logf("без звука: принято %d мс PCM, пик %d из 32767", null.ms(), null.peak.Load())
+		}()
+	}
+	eng := &engine.Engine{Router: engine.RouterFunc(func(_ engine.Class, f audio.Format) (audio.Output, error) {
+		if *silent {
+			null.f = f
+			return null, nil
+		}
+		return spk.Open(f)
+	}), Logf: logf}
+	c, err := soundcloud.NewStandalone(eng, *proxy, logf)
+	if err != nil {
+		return err
+	}
+	defer c.Shutdown()
+	u, err := control.ParseLink(*link)
+	if err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	title, err := c.PlayLink(ctx, u)
+	cancel()
+	if err != nil {
+		return fmt.Errorf("ссылка не включилась: %w", err)
+	}
+	logf("включено: %s", title)
+	end := time.After(*dur)
+	tick := time.NewTicker(time.Second)
+	defer tick.Stop()
+	first := false
+	for {
+		select {
+		case <-tick.C:
+			st := c.State()
+			logf("%s; звучит %v, RSS %d кБ", c.StatusLine(), st.Sounding, rssKB())
+			if !first && st.Sounding {
+				first = true
+				logf("звук пошёл через %s после ссылки", time.Since(t0).Round(time.Millisecond))
+			}
+			if st == (control.State{}) {
+				logf("очередь доиграна или остановлена")
+				return nil
+			}
+		case <-end:
+			logf("время вышло, останавливаю")
+			return nil
 		}
 	}
 }

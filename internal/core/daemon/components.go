@@ -163,6 +163,9 @@ func (d *daemon) attach(c *component) {
 	if p, ok := c.obj.(control.Player); ok { // плеер движка (Spotify): ему отдают команды кнопок и наушников
 		d.hub.Add(c.name, p)
 	}
+	if l, ok := c.obj.(control.LinkPlayer); ok { // включает музыку по ссылке своего сервиса (домены — LinkHosts)
+		d.hub.AddLink(c.name, l)
+	}
 	if s, ok := c.obj.(shutdowner); ok {
 		d.closers = append(d.closers, s.Shutdown)
 	}

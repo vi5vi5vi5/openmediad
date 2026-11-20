@@ -20,7 +20,7 @@
 |---|---|
 | `core` | только ядро: прозрачный посредник, колонка играет штатно |
 | `standard` (по умолчанию) | `yandex-music`, `alice-voice`, `system-sounds`, `display-spectrum`, `debug-page` |
-| `full` | `yandex-music`, `alice-voice`, `system-sounds`, `display-spectrum`, `debug-page`, `debug-profiler`, `bt-out`, `bt-in`, `spotify-soloist`, `led-ring`, `meetup` |
+| `full` | `yandex-music`, `alice-voice`, `system-sounds`, `display-spectrum`, `debug-page`, `debug-profiler`, `bt-out`, `bt-in`, `spotify-soloist`, `led-ring`, `meetup`, `soundcloud` |
 
 ```sh
 go run ./tools/build                       # профиль standard
@@ -46,11 +46,11 @@ go run ./tools/build -list                  # эта таблица в терм�
 | `spotify-soloist` | Spotify (Soloist) | необязательный | нет | — | `omd_spotify_soloist` |
 | `led-ring` | Подсветка колонки | необязательный | нет | — | `omd_led_ring` |
 | `meetup` | Конференция MeetUp | необязательный | нет | — | `omd_meetup` |
+| `soundcloud` | SoundCloud | необязательный | нет | — | `omd_soundcloud` |
 | `net-out` | Звук в сеть | необязательный | план, фаза 7 | — | `omd_net_out` |
 | `internet-radio` | Интернет-радио | необязательный | план, фаза 8 | — | `omd_internet_radio` |
 | `spotify-go-librespot` | Spotify (go-librespot) | необязательный | план, фаза 9 | — | `omd_spotify_go_librespot` |
 | `spotify-librespot` | Spotify (librespot) | необязательный | план, фаза 9 | — | `omd_spotify_librespot` |
-| `soundcloud` | SoundCloud | необязательный | план, фаза 10 | — | `omd_soundcloud` |
 | `net-in` | Приём звука по сети | необязательный | план, фаза 11 | — | `omd_net_in` |
 
 ## Паспорта
@@ -222,6 +222,22 @@ go run ./tools/build -list                  # эта таблица в терм�
 | Если убрать | колонка в конференции не участвует; звук играет в динамики или наушники |
 | **Внимание** | страница настроек (по умолчанию порт 6702) открыта компьютерам домашней сети без пароля; команды из чата по умолчанию выполняются от любого участника комнаты (кого слушаться, настраивается на странице), а `!алиса` передаёт Алисе любую фразу, как сказанную голосом (выключается там же) |
 
+### `soundcloud`
+
+| | |
+|---|---|
+| Название | SoundCloud |
+| Имя · тег сборки · настройки | `soundcloud` · `omd_soundcloud` · `[soundcloud]` |
+| Вид | источник звука (откуда берётся) |
+| Класс | **необязательный** — новая возможность сверх штатной колонки |
+| В сборке по умолчанию | нет (добавляется `-with soundcloud` или профилем `full`) |
+| Зрелость | опытный: проверен не полностью |
+| Что делает | SoundCloud по ссылке: трек, плейлист, альбом или треки исполнителя (`openmediad player link ССЫЛКА`, `!play ССЫЛКА` в MeetUp); звук HLS (AAC в fMP4) через движок, пауза, «дальше» и «назад» — через ядро команд, как у Spotify |
+| Нужно от прошивки | системный `aplay`: вывод звука; встроенный GStreamer колонки (`maind --gst-launch`): декодер AAC; сеть: api-v2.soundcloud.com, soundcloud.com (поиск client_id) и CDN потоков; из России — через прокси (ключ `proxy`); корневые сертификаты прошивки `/system/vendor/quasar/ca-certificates.crt` (запасной набор) |
+| Нужно от других компонентов | — |
+| Если убрать | ссылки SoundCloud колонка не включает (ответ: «ссылки soundcloud.com колонка не включает») |
+| **Внимание** | компонент пользуется внутренним API сайта SoundCloud с публичным client_id веб-плеера, который он сам находит на soundcloud.com; это не официальный API, он может измениться без предупреждения; треки только для подписчиков Go+ не играются |
+
 ### `net-out`
 
 | | |
@@ -271,19 +287,6 @@ go run ./tools/build -list                  # эта таблица в терм�
 | Класс | **необязательный** — новая возможность сверх штатной колонки |
 | Состояние | запланирован, фаза 9 плана (в сборку не входит) |
 | Что делает | Spotify Connect через librespot (отдельный процесс); для аккаунтов, которым Spotify выдаёт аудиоключ |
-| Нужно от прошивки | — |
-| Нужно от других компонентов | — |
-
-### `soundcloud`
-
-| | |
-|---|---|
-| Название | SoundCloud |
-| Имя · тег сборки · настройки | `soundcloud` · `omd_soundcloud` · `[soundcloud]` |
-| Вид | источник звука (откуда берётся) |
-| Класс | **необязательный** — новая возможность сверх штатной колонки |
-| Состояние | запланирован, фаза 10 плана (в сборку не входит) |
-| Что делает | SoundCloud |
 | Нужно от прошивки | — |
 | Нужно от других компонентов | — |
 

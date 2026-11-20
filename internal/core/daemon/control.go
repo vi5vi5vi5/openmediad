@@ -115,6 +115,12 @@ func (d *daemon) handle(ctx context.Context, req ctlsock.Request, send func(any)
 		return send(d.apiPlaying())
 	case "events":
 		return d.apiEvents(ctx, send)
+	case "link":
+		res, err := d.apiLink(ctx, req.Text)
+		if err != nil {
+			return err
+		}
+		return send(res)
 	case "ask":
 		if err := d.apiAsk(req.Text); err != nil {
 			return err

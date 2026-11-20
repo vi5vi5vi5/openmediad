@@ -69,7 +69,7 @@ openmediad/
 │   ├── components/              ══ КОМПОНЕНТЫ: опциональные возможности, у каждого паспорт ══
 │   │   ├── catalog/             ЕДИНАЯ ТАБЛИЦА паспортов (не компонент)
 │   │   ├── included/            include_<имя>.go: что войдёт в бинарник по тегам сборки (не компонент)
-│   │   ├── yandex-music/        Музыка Яндекса и радио   (+ mp4/, aac/)
+│   │   ├── yandex-music/        Музыка Яндекса и радио   (+ mp4/)
 │   │   ├── alice-voice/         Голос Алисы              (+ ogg/, opus/)
 │   │   ├── system-sounds/       Звонки и системные звуки (+ mp3/)
 │   │   ├── display-spectrum/    Спектр для дисплея и подсветки
@@ -78,15 +78,17 @@ openmediad/
 │   │   ├── bt-out/              Bluetooth-наушники: вывод звука
 │   │   ├── bt-in/               Bluetooth: звук с телефона через движок
 │   │   ├── spotify-soloist/     Spotify Connect через Soloist (+ shim/ на C, assets/ с готовым шимом)
-│   │   └── meetup/              Колонка в конференции MeetUp: звук в комнату, команды из чата (+ proto/)
+│   │   ├── meetup/              Колонка в конференции MeetUp: звук в комнату, команды из чата (+ proto/)
+│   │   └── soundcloud/          SoundCloud по ссылке: очередь, HLS (AAC в fMP4) через движок
 │   │
 │   ├── libs/                    ══ ОБЩЕЕ ДЛЯ КОМПОНЕНТОВ: не ядро, но нужно нескольким компонентам ══
-│   │   ├── gstreamer/           запуск встроенного GStreamer колонки         → yandex-music, system-sounds
+│   │   ├── gstreamer/           запуск встроенного GStreamer колонки         → yandex-music, system-sounds, aac
+│   │   ├── aac/                 ADTS и декодер AAC на GStreamer колонки      → yandex-music, soundcloud, hls
 │   │   ├── dbus/                свой клиент системной шины D-Bus             → bluez
 │   │   ├── bluez/               BlueZ и BlueALSA: устройства, спаривание     → bt-out, bt-in, bt-command
 │   │   ├── bt-command/          команда терминала `openmediad bt`            → приходит с bt-out или bt-in
 │   │   ├── alsactl/             регулятор громкости ALSA и статус PCM        → bt-out, devtools
-│   │   ├── hls/                 приём звукового потока HLS: плейлисты, сегменты, MPEG-TS → yandex-music (радио)
+│   │   ├── hls/                 приём звукового потока HLS: плейлисты, сегменты, MPEG-TS, fMP4 → yandex-music (радио), soundcloud
 │   │   ├── pcmstream/           звук от чужого процесса как источник движка  → spotify-soloist (и будущие движки Spotify)
 │   │   ├── ringled/             кольцо подсветки логотипа (/dev/fb0) и хранитель кадра → led-ring
 │   │   ├── clockled/            дисплей с часами (sysfs), анимации прошивки .binscled.zst, проигрыватель → led-ring
@@ -188,7 +190,7 @@ openmediad/
 
 | Где | Что подаётся | Конвейер |
 |---|---|---|
-| музыка Яндекса (`yandex-music/aac`) | Go сам скачивает поток, расшифровывает, разбирает MP4, режет на кадры AAC и оборачивает в ADTS | `fdsrc fd=0 ! aacparse ! avdec_aac ! audioconvert ! audioresample ! audio/x-raw,rate=48000,channels=2,format=S16LE ! fdsink fd=3 sync=false` |
+| музыка Яндекса и SoundCloud (`libs/aac`) | Go сам скачивает поток, расшифровывает, разбирает MP4, режет на кадры AAC и оборачивает в ADTS | `fdsrc fd=0 ! aacparse ! avdec_aac ! audioconvert ! audioresample ! audio/x-raw,rate=48000,channels=2,format=S16LE ! fdsink fd=3 sync=false` |
 | системные звуки (`system-sounds/library.go`) | файлы `/system/vendor/quasar/sounds/` (`timer.wav` — на самом деле MP3, `spotter_*.mp3`, jingle `.opus`) раскодируются целиком в память один раз | `filesrc location=<файл> ! decodebin ! audioconvert ! audioresample ! … ! fdsink fd=3 sync=false` |
 
 **Где его нет.** Голос Алисы (Ogg/Opus) декодирует чистый Go (`go-opus`): GStreamer на одном ответе давал ≈30 МБ в пике и ≈0,5 с,
@@ -210,7 +212,7 @@ Go-декодер — ≈3 МБ и ≈25 мс на секунду звука (HI
 
 | Сценарий | Путь |
 |---|---|
-| **«Алиса, включи музыку»** | платформа → iptables → `core/quasar/shim` → `daemon/intercept.go` → `quasar/mediad` (`machine.go` → `audio.go` `Play`) → `components/yandex-music/bind.go` `Open` → `source.go` + `fetch.go` (HTTPS, AES) → `mp4` + `aac` + `libs/gstreamer` (декодер) → `core/engine` (`stream.go`, `loop.go`) → `daemon/router.go` → `core/speaker` → `speaker/aplay` → `aplay`. Обратно: события `mediad` → `Proxy.Broadcast`. Параллельно спектр: `engine` → `display-spectrum` → порт 9903 |
+| **«Алиса, включи музыку»** | платформа → iptables → `core/quasar/shim` → `daemon/intercept.go` → `quasar/mediad` (`machine.go` → `audio.go` `Play`) → `components/yandex-music/bind.go` `Open` → `source.go` + `fetch.go` (HTTPS, AES) → `mp4` + `libs/aac` + `libs/gstreamer` (декодер) → `core/engine` (`stream.go`, `loop.go`) → `daemon/router.go` → `core/speaker` → `speaker/aplay` → `aplay`. Обратно: события `mediad` → `Proxy.Broadcast`. Параллельно спектр: `engine` → `display-spectrum` → порт 9903 |
 | **«Алиса, включи радио»** | та же команда плеера музыки, но в ней ссылка на плейлист HLS без ключа: `components/yandex-music/bind.go` `Open` → `radio.go` `RadioSource` → `libs/hls` (плейлист, сегменты MPEG-TS, извлечение AAC) → `libs/gstreamer` (декодер) → `core/engine` → выход по `[route]`. Не открылось до первого звука — команда уходит штатному `mediad` |
 | **Голос Алисы** | `quasar/mediad/voice.go` → `components/alice-voice/bind.go` → `source.go` → `ogg` + `opus` → `engine` (класс `voice`) |
 | **Звонок таймера** | `quasar/mediad/file.go` → `components/system-sounds/bind.go` → `library.go` (GStreamer) → `source.go` (по кругу) → `engine` (класс `alert`) |
@@ -218,6 +220,7 @@ Go-декодер — ≈3 МБ и ≈25 мс на секунду звука (HI
 | **`openmediad install`** | `core/cli/install.go` → `platform/install` → `platform/initd` (`guard.sh`, `initd.sh`) → `cli/start.go` → `guard.sh` → `platform/stock` `Rerouter` |
 | **`openmediad bt pair …`** | `libs/bt-command` → `libs/bluez` → `libs/dbus` → шина D-Bus → BlueZ. **Демон не участвует** |
 | **Наушники в демоне** | `components/bt-out` → `libs/bluez` / `libs/dbus` (слежение) → `mixer.go` → `speaker/aplay` → `aplay` в PCM BlueALSA; `daemon/components.go` `attach` → `router.add` |
+| **Музыка по ссылке** | `!play ССЫЛКА` (`meetup/bot.go`) или `openmediad player link` (`cli/player.go` → сокет `link` → `daemon/api.go`) → `control.Hub.PlayLink` (`links.go`: плеер по домену) → `soundcloud/player.go` (resolve → очередь → `source.go`: `libs/hls` + `libs/aac` → `core/engine`) / `spotify-soloist/link.go` (URI → Soloist) / `yandex-music/link.go` (открытый API → просьба Алисе) |
 | **Музыка в конференцию MeetUp** | `[route]` → `daemon/router.go` → `components/meetup` `Open` → `mixer.go` (моно, кадр 20 мс) → `component.go` `frame` (кодер Opus) → `sendLoop` → `meetup/proto` → `libs/wsclient` → сервер MeetUp. Обратно: чат → `proto.Session.Run` → `bot.go` → `control.Hub` или фраза Алисе (`alicedclient`) |
 
 ---
@@ -261,7 +264,7 @@ Go-декодер — ≈3 МБ и ≈25 мс на секунду звука (HI
 | `internal/system/{layout,device,stock,iptables,proc,disk,clock,install,initd}` | `internal/core/platform/…` |
 | `internal/system/{alsactl,dbus,bluez}` | `internal/libs/{alsactl,dbus,bluez}` |
 | `internal/codec/gst` | `internal/libs/gstreamer` |
-| `internal/codec/{aac,mp4}` / `{ogg,opus}` / `mp3` | `components/yandex-music/…` / `components/alice-voice/…` / `components/system-sounds/mp3` |
+| `internal/codec/{aac,mp4}` / `{ogg,opus}` / `mp3` | `libs/aac`, `components/yandex-music/mp4` / `components/alice-voice/…` / `components/system-sounds/mp3` |
 | `internal/source/yandex` / `tts` / `sounds` / `btin` | `components/yandex-music` / `alice-voice` / `system-sounds` / `bt-in` |
 | `internal/sink/bluetooth` | `components/bt-out` (`bluetooth.go` разделён на `btout.go`, `transports.go`, `reconnect.go`, `status.go`) |
 | `internal/debug`, `internal/debug/pprof` | `components/debug-page`, `components/debug-profiler` |

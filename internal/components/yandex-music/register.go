@@ -6,6 +6,7 @@ import (
 	"openmediad/internal/core/config"
 	"openmediad/internal/core/engine"
 	"openmediad/internal/core/led"
+	"openmediad/internal/core/quasar/alicedclient"
 	"openmediad/internal/core/quasar/mediad"
 	"openmediad/internal/core/registry"
 )
@@ -33,6 +34,8 @@ func init() {
 			if ind, ok := registry.Use[led.Indicator](env, "led"); ok {
 				b.LED = ind
 			}
+			aliced := &alicedclient.Client{}
+			b.Ask = aliced.Ask
 			b.Warm() // сертификаты читаются при запуске, а не на первой команде (иначе задержится кадр шины)
 			return b, nil
 		},

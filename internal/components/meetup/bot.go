@@ -2,6 +2,7 @@ package meetup
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -22,6 +23,8 @@ import (
 const (
 	maxPhrase  = 200             // предел длины фразы Алисе из чата, символов
 	askTimeout = 5 * time.Second // сколько ждём, пока платформа примет фразу или команду
+	// linkTimeout — сколько плеер может разбираться со ссылкой (узнать по сети, что это, и запустить). Очередь команд на это время занята.
+	linkTimeout = 20 * time.Second
 )
 
 type chatCommand struct {
@@ -35,7 +38,7 @@ var chatCommands []chatCommand
 
 func init() {
 	chatCommands = []chatCommand{
-		{[]string{"play", "играй", "включи"}, "[что]", "продолжить музыку; с запросом — попросить Алису включить", (*Component).cmdPlay},
+		{[]string{"play", "играй", "включи"}, "[что | ссылка]", "продолжить музыку; с запросом — попросить Алису включить; со ссылкой на трек, альбом или плейлист (SoundCloud, Spotify, Яндекс Музыка) — включить её", (*Component).cmdPlay},
 		{[]string{"pause", "пауза", "стоп", "stop"}, "", "пауза", func(c *Component, _ string) string { return c.cmdPlayer(control.Pause, "⏸ Пауза") }},
 		{[]string{"next", "дальше", "skip"}, "", "следующий трек", func(c *Component, _ string) string { return c.cmdPlayer(control.Next, "⏭ Дальше") }},
 		{[]string{"prev", "назад"}, "", "предыдущий трек", func(c *Component, _ string) string { return c.cmdPlayer(control.Prev, "⏮ Назад") }},
@@ -191,6 +194,9 @@ func (c *Component) cmdPlay(arg string) string {
 		}
 		return "▶ Алиса, играй"
 	}
+	if control.LooksLikeLink(arg) {
+		return c.playLink(arg)
+	}
 	if !c.freePhrases() {
 		return "Запросы к Алисе из чата выключены в настройках колонки. Без запроса команда работает."
 	}
@@ -199,6 +205,27 @@ func (c *Component) cmdPlay(arg string) string {
 		return "Не получилось: " + err.Error()
 	}
 	return "▶ Алиса, включи «" + arg + "»"
+}
+
+// playLink включает музыку по ссылке: ядро отдаёт её плееру, чей это сервис (SoundCloud, Spotify, Яндекс Музыка). Работает и при
+// выключенных фразах Алисе: ссылка — не свободная фраза.
+func (c *Component) playLink(link string) string {
+	if c.hub == nil {
+		return "Включать по ссылке некому: ядро команд недоступно."
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), linkTimeout)
+	defer cancel()
+	player, title, err := c.hub.PlayLink(ctx, link)
+	var none *control.NoLinkPlayerError
+	switch {
+	case errors.As(err, &none):
+		return "Не получилось: " + none.Error() + "."
+	case err != nil:
+		return "Не получилось: " + err.Error()
+	case title != "":
+		return "▶ " + title + " (" + player + ")"
+	}
+	return "▶ Включено (" + player + ")"
 }
 
 func (c *Component) cmdAlice(arg string) string {

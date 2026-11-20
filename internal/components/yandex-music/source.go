@@ -10,9 +10,9 @@ import (
 	"sync/atomic"
 	"time"
 
-	"openmediad/internal/components/yandex-music/aac"
 	"openmediad/internal/components/yandex-music/mp4"
 	"openmediad/internal/core/audio"
+	"openmediad/internal/libs/aac"
 )
 
 const (

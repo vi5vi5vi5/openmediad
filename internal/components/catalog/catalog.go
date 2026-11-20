@@ -134,13 +134,27 @@ var All = []registry.Info{
 		Notice: "страница настроек (по умолчанию порт 6702) открыта компьютерам домашней сети без пароля; " +
 			"команды из чата по умолчанию выполняются от любого участника комнаты (кого слушаться, настраивается на странице), а `!алиса` передаёт Алисе любую фразу, как сказанную голосом (выключается там же)",
 	},
+	{
+		Name: "soundcloud", Title: "SoundCloud", Section: "soundcloud", Kind: registry.Source, Class: registry.Optional,
+		Summary: "SoundCloud по ссылке: трек, плейлист, альбом или треки исполнителя (`openmediad player link ССЫЛКА`, `!play ССЫЛКА` в MeetUp); " +
+			"звук HLS (AAC в fMP4) через движок, пауза, «дальше» и «назад» — через ядро команд, как у Spotify",
+		Experimental: true, Ready: true,
+		Needs: []registry.Need{
+			need(registry.NeedAplay, "системный `aplay`: вывод звука"),
+			need(registry.NeedGStreamer, "встроенный GStreamer колонки (`maind --gst-launch`): декодер AAC"),
+			need(registry.NeedNetwork, "сеть: api-v2.soundcloud.com, soundcloud.com (поиск client_id) и CDN потоков; из России — через прокси (ключ `proxy`)"),
+			need(registry.NeedCA, "корневые сертификаты прошивки `/system/vendor/quasar/ca-certificates.crt` (запасной набор)"),
+		},
+		WithoutIt: "ссылки SoundCloud колонка не включает (ответ: «ссылки soundcloud.com колонка не включает»)",
+		Notice: "компонент пользуется внутренним API сайта SoundCloud с публичным client_id веб-плеера, который он сам находит на soundcloud.com; " +
+			"это не официальный API, он может измениться без предупреждения; треки только для подписчиков Go+ не играются",
+	},
 
 	// запланированные (в сборку не входят)
 	{Name: "net-out", Title: "Звук в сеть", Section: "net-out", Kind: registry.Sink, Class: registry.Optional, Summary: "звук в сеть для других программ", Phase: 7},
 	{Name: "internet-radio", Title: "Интернет-радио", Section: "internet-radio", Kind: registry.Source, Class: registry.Optional, Summary: "интернет-радио и HTTP-потоки", Phase: 8},
 	{Name: "spotify-go-librespot", Title: "Spotify (go-librespot)", Section: "spotify-go-librespot", Kind: registry.Source, Class: registry.Optional, Summary: "Spotify Connect через go-librespot (отдельный процесс); для аккаунтов, которым Spotify выдаёт аудиоключ", Phase: 9},
 	{Name: "spotify-librespot", Title: "Spotify (librespot)", Section: "spotify-librespot", Kind: registry.Source, Class: registry.Optional, Summary: "Spotify Connect через librespot (отдельный процесс); для аккаунтов, которым Spotify выдаёт аудиоключ", Phase: 9},
-	{Name: "soundcloud", Title: "SoundCloud", Section: "soundcloud", Kind: registry.Source, Class: registry.Optional, Summary: "SoundCloud", Phase: 10},
 	{Name: "net-in", Title: "Приём звука по сети", Section: "net-in", Kind: registry.Source, Class: registry.Optional, Summary: "приём звука по сети", Phase: 11},
 }
 

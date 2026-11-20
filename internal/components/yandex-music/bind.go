@@ -1,17 +1,18 @@
 package yandexmusic
 
 import (
+	"context"
 	"net/http"
 	"sort"
 	"sync"
 	"time"
 
-	"openmediad/internal/components/yandex-music/aac"
 	"openmediad/internal/core/audio"
 	"openmediad/internal/core/engine"
 	"openmediad/internal/core/led"
 	"openmediad/internal/core/quasar/mediad"
 	"openmediad/internal/core/spectrum"
+	"openmediad/internal/libs/aac"
 )
 
 // Привязка к эмуляции mediad: Backend реализует mediad.Backend — плееры музыки (команды prefetch, play, pause, release,
@@ -47,6 +48,10 @@ type Backend struct {
 	NoFadeIn      bool          // для тестов, которые читают отсчёты как метки
 	NoRewind      bool          // для тестов с мгновенным выводом: возврат звука по часам там неприменим
 	LED           led.Indicator // необязательно: подсветка показывает, что музыку играет Яндекс
+	// Ask — сказать Алисе фразу, как голосом (музыка по ссылке: link.go); nil — ссылки не включаются.
+	Ask func(ctx context.Context, text string) error
+	// LinkAPI — адрес открытого API Яндекс Музыки (для тестов); пусто — настоящий.
+	LinkAPI string
 
 	mu      sync.Mutex
 	players map[string]*player

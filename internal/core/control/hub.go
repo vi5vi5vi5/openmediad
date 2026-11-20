@@ -43,9 +43,10 @@ type Hub struct {
 
 	mu         sync.Mutex
 	players    []member
-	owner      string    // кто последним начал играть: имя плеера или OwnerPlatform
-	platformAt time.Time // когда платформа последний раз сама адресовала команду плееру
-	lastCmd    Cmd       // что выполнено последним (для защиты от повтора директивой облака)
+	links      []linkMember // плееры ссылок (links.go)
+	owner      string       // кто последним начал играть: имя плеера или OwnerPlatform
+	platformAt time.Time    // когда платформа последний раз сама адресовала команду плееру
+	lastCmd    Cmd          // что выполнено последним (для защиты от повтора директивой облака)
 	lastAt     time.Time
 
 	subs   map[int]func(Event)

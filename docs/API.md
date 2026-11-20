@@ -20,6 +20,7 @@ JSON, ответ — строки `{"ok":true,"data":…}` или `{"ok":false,"
 | кто играет | `openmediad player [-json]` | `{"cmd":"players"}` |
 | события по мере появления | `openmediad events [-json]` | `{"cmd":"events"}` |
 | фраза Алисе, как голосом | `openmediad ask включи свет` | `{"cmd":"ask","text":"включи свет"}` |
+| музыка по ссылке | `openmediad player link https://soundcloud.com/…` | `{"cmd":"link","text":"https://soundcloud.com/…"}` → `{"player":"soundcloud","title":"Forss — Flickermood"}` |
 | состояние движка | `openmediad status [-v] [-json]` | `{"cmd":"status","detail":true}` |
 | журнал | `openmediad logs [-f] [-json]` | `{"cmd":"logs","limit":100}`, `{"cmd":"follow"}` |
 | перечитать настройки | `openmediad config update` | `{"cmd":"reload"}` |

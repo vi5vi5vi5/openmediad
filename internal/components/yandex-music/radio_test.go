@@ -13,10 +13,10 @@ import (
 	"testing"
 	"time"
 
-	"openmediad/internal/components/yandex-music/aac"
 	"openmediad/internal/core/audio"
 	"openmediad/internal/core/engine"
 	"openmediad/internal/core/quasar/mediad"
+	"openmediad/internal/libs/aac"
 )
 
 const radioBlock = 96000 // PCM на один сегмент у поддельного декодера радио: полсекунды
@@ -233,13 +233,13 @@ func TestRadioMP3Station(t *testing.T) {
 	}
 }
 
-// Поток, который движок играть не умеет (шифрованный, fMP4) или который не открылся: ошибка до первого звука — автомат
+// Поток, который движок играть не умеет (шифрованный, fMP4 кусками файла) или который не открылся: ошибка до первого звука — автомат
 // отдаст команду штатному плееру, и радио сыграет он. В тексте ошибки нет ссылки (в ней метка сессии).
 func TestRadioFailsBeforeSound(t *testing.T) {
 	for name, media := range map[string]string{
 		"шифрованные сегменты": "#EXTM3U\n#EXT-X-TARGETDURATION:2\n#EXT-X-KEY:METHOD=AES-128,URI=\"key\"\n#EXTINF:2,\nseg1.aac\n",
-		"fMP4":        "#EXTM3U\n#EXT-X-TARGETDURATION:2\n#EXT-X-MAP:URI=\"init.mp4\"\n#EXTINF:2,\nseg1.m4s\n",
-		"не плейлист": "<html>станция переехала</html>",
+		"fMP4 кусками файла":   "#EXTM3U\n#EXT-X-TARGETDURATION:2\n#EXT-X-MAP:URI=\"init.mp4\",BYTERANGE=\"700@0\"\n#EXTINF:2,\nseg1.m4s\n",
+		"не плейлист":          "<html>станция переехала</html>",
 	} {
 		st := newRadioStation(t, 0, 4)
 		st.media = media

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/binary"
 	"math"
+	"net/url"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -491,5 +492,36 @@ func TestConfigValidate(t *testing.T) {
 	c.Listen, c.Prefix = "", ""
 	if err := c.validate(); err != nil {
 		t.Fatalf("без страницы и без команд: %v", err)
+	}
+}
+
+type linkPlayer struct {
+	mu  sync.Mutex
+	got []string
+}
+
+func (l *linkPlayer) LinkHosts() []string { return []string{"soundcloud.com"} }
+func (l *linkPlayer) PlayLink(_ context.Context, u *url.URL) (string, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.got = append(l.got, u.String())
+	return "Forss — Flickermood", nil
+}
+
+// !play со ссылкой: ссылку включает плеер её сервиса через ядро, а не Алиса; работает и при выключенных фразах Алисе.
+func TestChatPlayLink(t *testing.T) {
+	s := newStand(t)
+	lp := &linkPlayer{}
+	s.c.hub.AddLink("soundcloud", lp)
+	s.join()
+	s.c.Update(func(set *Settings) { set.Alice = false })
+	if r := s.command("!play 'https://soundcloud.com/forss/flickermood'"); !strings.Contains(r, "Forss — Flickermood (soundcloud)") {
+		t.Fatalf("ответ на !play со ссылкой: %q", r)
+	}
+	if r := s.command("!play youtube.com/watch?v=1"); !strings.Contains(r, "youtube.com") || !strings.Contains(r, "soundcloud.com") {
+		t.Fatalf("ответ на ссылку, которую никто не умеет: %q", r)
+	}
+	if len(lp.got) != 1 || lp.got[0] != "https://soundcloud.com/forss/flickermood" || len(s.askedPhrases()) != 0 {
+		t.Fatalf("плеер ссылок получил %q, Алисе сказано %q", lp.got, s.askedPhrases())
 	}
 }

@@ -11,12 +11,12 @@ import (
 	"testing"
 	"time"
 
-	"openmediad/internal/components/yandex-music/aac"
 	"openmediad/internal/components/yandex-music/mp4/mp4test"
 	"openmediad/internal/core/audio"
 	"openmediad/internal/core/engine"
 	"openmediad/internal/core/quasar/mediad"
 	"openmediad/internal/core/spectrum"
+	"openmediad/internal/libs/aac"
 )
 
 const fakeFrameBytes = 4096 // PCM на один кадр AAC у поддельного декодера

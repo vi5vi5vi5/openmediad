@@ -65,9 +65,9 @@ func TestParse(t *testing.T) {
 		t.Fatalf("медиа-плейлист: %+v, %v", p, err)
 	}
 	want := []Segment{
-		{"https://radio.example.com/silver/112/l0_a.ts", 41, 5990748 * time.Microsecond},
-		{"https://cdn.example.com/abs/l0_b.ts?x=1", 42, 5990748 * time.Microsecond},
-		{"https://radio.example.com/silver/up/l0_c.ts", 43, 6 * time.Second},
+		{URL: "https://radio.example.com/silver/112/l0_a.ts", Seq: 41, Duration: 5990748 * time.Microsecond},
+		{URL: "https://cdn.example.com/abs/l0_b.ts?x=1", Seq: 42, Duration: 5990748 * time.Microsecond},
+		{URL: "https://radio.example.com/silver/up/l0_c.ts", Seq: 43, Duration: 6 * time.Second},
 	}
 	for i, w := range want {
 		if p.Segments[i] != w {
@@ -90,7 +90,6 @@ func TestParse(t *testing.T) {
 		"не плейлист":     "<html>404</html>",
 		"пустой":          "#EXTM3U\n",
 		"шифрованный":     "#EXTM3U\n#EXT-X-KEY:METHOD=AES-128,URI=\"k\"\n#EXTINF:6,\na.ts\n",
-		"fMP4":            "#EXTM3U\n#EXT-X-MAP:URI=\"init.mp4\"\n#EXTINF:6,\na.m4s\n",
 		"негодная ссылка": "#EXTM3U\n#EXTINF:6,\nhttp://[::1\n",
 	} {
 		if p, err := Parse(text, mustURL("http://x/p.m3u8")); err == nil {
@@ -234,8 +233,8 @@ func TestExtractRaw(t *testing.T) {
 		t.Fatalf("MP3: %v, %v", mp3.Codec(), err)
 	}
 	for name, seg := range map[string][]byte{
-		"fMP4":  append([]byte{0, 0, 0, 24, 's', 't', 'y', 'p'}, make([]byte, 16)...),
-		"мусор": []byte("<html>ошибка</html>"),
+		"fMP4 с чужим кодеком": append(initSegment(1, "ac-3", 0), fragment(1, aacFrames(2, 1), true)...),
+		"мусор":                []byte("<html>ошибка</html>"),
 	} {
 		var x Extractor
 		if _, err := x.Push(seg); !errors.Is(err, ErrUnsupported) {

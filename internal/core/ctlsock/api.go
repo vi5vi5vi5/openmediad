@@ -19,6 +19,12 @@ type ControlResult struct {
 	By string `json:"by"`
 }
 
+// LinkResult — ответ на link: музыка по ссылке включена.
+type LinkResult struct {
+	Player string `json:"player"`          // кто включил: имя компонента (soundcloud, spotify-soloist, yandex-music)
+	Title  string `json:"title,omitempty"` // что включено, для человека; пусто — плеер не знает
+}
+
 // PlayerState — плеер движка глазами ядра (control.State).
 type PlayerState struct {
 	Name      string `json:"name"`

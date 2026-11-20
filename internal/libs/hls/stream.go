@@ -41,6 +41,7 @@ type Stream struct {
 	list  *Playlist
 	next  uint64 // номер сегмента, который отдаст следующий Next
 	skips int
+	init  string // сегмент инициализации fMP4, уже отданный вместе с сегментом (его адрес)
 	sleep func(context.Context, time.Duration) error
 }
 
@@ -158,11 +159,21 @@ func (s *Stream) load(ctx context.Context, u *url.URL) (*Playlist, *url.URL, err
 
 // Next возвращает следующий сегмент целиком. Для живого потока ждёт, пока он появится в плейлисте. io.EOF — запись
 // кончилась (EXT-X-ENDLIST); другая ошибка — поток умер (плейлист не обновляется или сегменты не скачиваются).
+//
+// У потока fMP4 перед первым сегментом (и когда EXT-X-MAP сменился) идёт сегмент инициализации: Next отдаёт их одним куском
+// (инициализация, затем сегмент), и Extractor читает из инициализации, чем сжат звук.
 func (s *Stream) Next(ctx context.Context) ([]byte, error) {
 	var idle time.Duration
 	for {
 		if seg, ok := s.find(); ok {
 			data, _, err := s.get(ctx, seg.URL, maxSegment)
+			if err == nil && seg.Map != "" && seg.Map != s.init {
+				var init []byte
+				if init, _, err = s.get(ctx, seg.Map, maxSegment); err == nil {
+					s.init = seg.Map
+					data = append(init, data...)
+				}
+			}
 			if err == nil {
 				s.next, s.skips = seg.Seq+1, 0
 				return data, nil

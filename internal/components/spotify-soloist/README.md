@@ -308,6 +308,7 @@ Soloist при этом перезапускается за пару секун�
 | `phrases.go`, `voice.go` | голос: таблица фраз, кто хозяин звука, перехват фразы (`InterceptPhrase`), директивы облака (`OnDirective`), отмена диалога Алисы |
 | `virtual.go` | Spotify как плеер платформы: состояние Soloist → автомат (`SetVirtual`), команды платформы → Soloist, замена запуска Яндекса (`ArmCarrier`, `TakeOver`) |
 | `playreq.go`, `request.go`, `aliases.go`, `search.go` | «включи <название>»: разбор фразы, вердикт облака, свои названия, поиск в Spotify |
+| `link.go` | музыка по ссылке (`control.LinkPlayer`): `open.spotify.com/…` и короткие `spotify.link` → `spotify:<вид>:<id>` → `play` с `uri` в Soloist |
 | `phrasebook.go`, `phrases_cmd.go` | слова и фразы голосовых просьб из `phrases.txt` (названия сервиса, предлоги, целые фразы запуска), `openmediad spotify phrases` |
 | `webapi.go`, `like.go` | Web API Spotify (вход PKCE, прокси, обновление токена, лайки, проверка), сигнал подтверждения |
 | `setup.go`, `command.go` | установка, ключ, команда `openmediad spotify` |

@@ -5,7 +5,9 @@
 
 | Папка | Что это | Кому нужно |
 |---|---|---|
-| [`gstreamer/`](gstreamer/README.md) | запуск встроенного GStreamer колонки (`maind --gst-launch`) | `yandex-music`, `system-sounds` |
+| [`gstreamer/`](gstreamer/README.md) | запуск встроенного GStreamer колонки (`maind --gst-launch`) | `yandex-music`, `system-sounds`, `aac` |
+| [`aac/`](aac/README.md) | заголовок ADTS и декодер AAC → PCM на GStreamer колонки | `yandex-music`, `soundcloud`, `hls` |
+| [`hls/`](hls/README.md) | приём звукового потока HLS: плейлисты, сегменты, звук из MPEG-TS, fMP4, голого AAC и MP3 | `yandex-music` (радио), `soundcloud` |
 | [`dbus/`](dbus/README.md) | свой клиент системной шины D-Bus | `bluez` |
 | [`bluez/`](bluez/README.md) | BlueZ и BlueALSA: устройства, спаривание, PCM | `bt-out`, `bt-in`, `bt-command` |
 | [`bt-command/`](bt-command/README.md) | команда терминала `openmediad bt` | приходит вместе с `bt-out` или `bt-in` |

@@ -74,7 +74,7 @@
 
 | Папка | Что внутри |
 |---|---|
-| `yandex-music` | музыка Яндекса: `fetch.go` (HTTPS, AES), `source.go`, `radio.go` (радиостанции: живой поток HLS), `bind.go` (привязка к автомату mediad), `register.go`; подпакеты `mp4/`, `aac/` |
+| `yandex-music` | музыка Яндекса: `fetch.go` (HTTPS, AES), `source.go`, `radio.go` (радиостанции: живой поток HLS), `bind.go` (привязка к автомату mediad), `link.go` (ссылка → просьба Алисе), `register.go`; подпакет `mp4/` |
 | `alice-voice` | голос Алисы: `source.go`, `bind.go`, `register.go`; подпакеты `ogg/`, `opus/` |
 | `system-sounds` | звонки и системные звуки: `library.go`, `source.go`, `bind.go`, `path.go`, `register.go`; подпакет `mp3/` |
 | `display-spectrum` | сообщения спектра и клиент iohub |
@@ -82,14 +82,15 @@
 | `bt-out`, `bt-in` | Bluetooth-наушники (вывод) и звук с телефона (ввод) |
 | `spotify-soloist` | Spotify Connect через Soloist: процесс под надзором, шим `libpulse` → сокет → поток движка, WebSocket API, установка (`openmediad spotify`) |
 | `meetup` | колонка как участник конференции MeetUp: выход звука `meetup` (смеситель → кодер Opus → WebSocket), команды из чата, страница настроек, `openmediad meetup`; подпакет `proto/` |
+| `soundcloud` | SoundCloud по ссылке: внутренний API сайта (client_id находится сам), очередь треков, звук HLS (AAC в fMP4) → `libs/hls` → `libs/aac` → поток движка; плеер ядра и плеер ссылок |
 | `catalog` | **единая таблица паспортов** (не компонент) |
 | `included` | какие компоненты войдут в бинарник по тегам сборки (не компонент) |
 
 ### Библиотеки — `internal/libs`
 
-`gstreamer` (запуск `maind --gst-launch` со сторожем), `dbus` (свой клиент системной шины), `bluez` (BlueZ и BlueALSA), `bt-command` (команда
+`gstreamer` (запуск `maind --gst-launch` со сторожем), `aac` (ADTS и декодер AAC на GStreamer), `dbus` (свой клиент системной шины), `bluez` (BlueZ и BlueALSA), `bt-command` (команда
 `openmediad bt`), `alsactl` (громкость Master и статус PCM), `pcmstream` (звук чужого
-процесса как источник движка), `wsclient` (WebSocket, в том числе поверх TLS), `debpkg` (файлы из .deb), `hls` (приём звукового потока HLS: радио).
+процесса как источник движка), `wsclient` (WebSocket, в том числе поверх TLS), `debpkg` (файлы из .deb), `hls` (приём звукового потока HLS: радио, SoundCloud; MPEG-TS, fMP4, голый AAC и MP3).
 
 ### Правила зависимостей
 
@@ -163,6 +164,7 @@ components -v` показывает то же в терминале, `openmediad
 | `Reload(cfg) (restart []string)` | компонент применяет изменённые настройки на ходу и называет ключи, которым нужен перезапуск |
 | `OnFocus(on bool)` | диалог с Алисой начался или кончился. Музыку на это время приглушает само ядро (класс «музыка» движка, от компонента музыки это не зависит); компоненту это нужно для своего — так `alice-voice` держит громкость ответов, а `spotify-soloist` не двигает ползунок приложения |
 | `Accepts/State/Do` (`control.Player`) | плеер ядра: получает команды из любого источника ([PLAYERS.md](PLAYERS.md)) |
+| `LinkHosts/PlayLink` (`control.LinkPlayer`) | включает музыку по ссылке своего сервиса: ядро отдаёт ссылку по домену (`openmediad player link`, `!play ССЫЛКА` в MeetUp) |
 | `Name()`, `Available()`, `Open(формат)` | выход звука: маршрутизатор `[route]` находит его по имени (так подключаются наушники) |
 
 Подписи методов должны совпадать точно: демон подключает компонент по ним. Если у компонента есть метод с именем точки расширения, но другой

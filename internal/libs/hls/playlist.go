@@ -1,5 +1,5 @@
 // Package hls — приём звукового потока HLS (RFC 8216): разбор плейлистов, выбор варианта, чтение сегментов живого потока
-// по порядку и извлечение из них звука (AAC или MP3). Так вещают радиостанции, которые включает Алиса.
+// по порядку и извлечение из них звука (AAC или MP3). Так вещают радиостанции, которые включает Алиса, и SoundCloud (запись, сегменты fMP4).
 //
 // Пакет только качает и разбирает: декодирования здесь нет (звук отдаётся сжатым, как пришёл), ссылки в журнал не пишутся
 // (в них бывают метки сессии).
@@ -27,6 +27,7 @@ type Segment struct {
 	URL      string
 	Seq      uint64 // порядковый номер (EXT-X-MEDIA-SEQUENCE + место в плейлисте)
 	Duration time.Duration
+	Map      string // сегмент инициализации fMP4 (EXT-X-MAP), который действует для этого сегмента; пусто — сегмент самодостаточен (MPEG-TS, голый звук)
 }
 
 // Playlist — разобранный плейлист: главный (Variants) или медиа (Segments).
@@ -41,7 +42,7 @@ type Playlist struct {
 // Master — это главный плейлист (список вариантов).
 func (p *Playlist) Master() bool { return len(p.Variants) > 0 }
 
-// ErrUnsupported — поток устроен так, как этот пакет не умеет: шифрованные сегменты или сегменты fMP4.
+// ErrUnsupported — поток устроен так, как этот пакет не умеет: шифрованные сегменты, кусок файла вместо сегмента (BYTERANGE), звук не AAC и не MP3.
 var ErrUnsupported = errors.New("hls: поток не поддержан")
 
 // Parse разбирает плейлист; base — его адрес (относительные ссылки внутри считаются от него).
@@ -55,6 +56,7 @@ func Parse(text string, base *url.URL) (*Playlist, error) {
 	var seq uint64
 	var dur time.Duration
 	var variant *Variant
+	var initURL string // действующий EXT-X-MAP
 	for sc.Scan() {
 		line := strings.TrimSpace(sc.Text())
 		switch {
@@ -81,7 +83,17 @@ func Parse(text string, base *url.URL) (*Playlist, error) {
 				return nil, fmt.Errorf("%w: сегменты зашифрованы (%s)", ErrUnsupported, m)
 			}
 		case strings.HasPrefix(line, "#EXT-X-MAP:"):
-			return nil, fmt.Errorf("%w: сегменты fMP4", ErrUnsupported)
+			attrs := attributes(line[len("#EXT-X-MAP:"):])
+			if attrs["BYTERANGE"] != "" {
+				return nil, fmt.Errorf("%w: сегмент инициализации — кусок файла (BYTERANGE)", ErrUnsupported)
+			}
+			u, err := base.Parse(attrs["URI"])
+			if attrs["URI"] == "" || err != nil {
+				return nil, errors.New("hls: в EXT-X-MAP негодная ссылка")
+			}
+			initURL = u.String()
+		case strings.HasPrefix(line, "#EXT-X-BYTERANGE:"):
+			return nil, fmt.Errorf("%w: сегменты — куски файла (BYTERANGE)", ErrUnsupported)
 		case strings.HasPrefix(line, "#"):
 		default: // ссылка: вариант (после EXT-X-STREAM-INF) или сегмент
 			u, err := base.Parse(line)
@@ -94,7 +106,7 @@ func Parse(text string, base *url.URL) (*Playlist, error) {
 				variant = nil
 				continue
 			}
-			p.Segments = append(p.Segments, Segment{URL: u.String(), Seq: seq, Duration: dur})
+			p.Segments = append(p.Segments, Segment{URL: u.String(), Seq: seq, Duration: dur, Map: initURL})
 			seq++
 			dur = 0
 		}

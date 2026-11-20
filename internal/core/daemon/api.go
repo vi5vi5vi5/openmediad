@@ -108,6 +108,20 @@ func (d *daemon) apiPlaying() ctlsock.Playing {
 	return out
 }
 
+// apiLink включает музыку по ссылке: ядро отдаёт её плееру, чей это домен (control.Hub.PlayLink).
+func (d *daemon) apiLink(ctx context.Context, link string) (ctlsock.LinkResult, error) {
+	ctx, cancel := context.WithTimeout(ctx, linkTimeout)
+	defer cancel()
+	player, title, err := d.hub.PlayLink(ctx, link)
+	if err != nil {
+		return ctlsock.LinkResult{}, err
+	}
+	return ctlsock.LinkResult{Player: player, Title: title}, nil
+}
+
+// linkTimeout — сколько плеер может разбираться со ссылкой (узнать по сети, что это, и запустить).
+const linkTimeout = 20 * time.Second
+
 // apiAsk говорит Алисе фразу, как голосом: она ответит и выполнит её, как обычную просьбу.
 func (d *daemon) apiAsk(text string) error {
 	text = strings.TrimSpace(text)

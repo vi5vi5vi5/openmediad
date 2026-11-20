@@ -112,6 +112,23 @@ func (c *Component) Do(cmd control.Cmd, from control.Origin) error {
 Службы ядра для компонента берутся из `env`: `registry.Use[*control.Hub](env, "control")` (если плееру нужно знать, хозяин ли он звука, для действий не про
 воспроизведение — лайк, «включи музыку»: `hub.Owns(Name)` и `hub.Idle()`), `"led"`, `"engine"`, `"machine"`, `"swallow-voice"`.
 
+## Музыка по ссылке (необязательно)
+
+Если ваш плеер умеет включать музыку по ссылке своего сервиса, добавьте два метода (интерфейс `control.LinkPlayer`):
+
+```go
+// LinkHosts: домены сервиса. Поддомены подходят сами (m.soundcloud.com, www.…).
+func (c *Component) LinkHosts() []string { return []string{"soundcloud.com", "on.soundcloud.com"} }
+
+// PlayLink: включить то, на что ведёт ссылка (трек, альбом, плейлист), и вернуть название для человека. Можно ходить в сеть (ctx ограничивает
+// время). Ошибку покажут человеку как есть: пишите её по-русски и без ссылки (в ней бывают личные метки).
+func (c *Component) PlayLink(ctx context.Context, link *url.URL) (title string, err error)
+```
+
+Демон подключит их сам. Ссылку приносит ядро (`Hub.PlayLink`) из `openmediad player link ССЫЛКА`, команды сокета `link` и `!play ССЫЛКА` в
+конференции; кому её отдать, ядро решает по домену. Источник об этом ничего не знает. Образцы — `soundcloud/player.go` (своя очередь),
+`spotify-soloist/link.go` (ссылка → URI → Soloist) и `yandex-music/link.go` (компонент музыки платформы: ссылка → название → просьба Алисе).
+
 ## Как проверить
 
 В `core/control/controltest` лежит всё готовое:

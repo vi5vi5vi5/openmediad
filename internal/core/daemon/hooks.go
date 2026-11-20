@@ -3,6 +3,8 @@ package daemon
 import (
 	"fmt"
 	"reflect"
+
+	"openmediad/internal/core/control"
 )
 
 // Проверка точек расширения. Демон подключает компонент по методам, которые тот реализует (components.go): есть OnReply с нужной подписью —
@@ -29,6 +31,8 @@ var hooks = []hook{
 	{"Shutdown", func(o any) bool { _, ok := o.(shutdowner); return ok }, "Shutdown()"},
 	{"LogsDialog", func(o any) bool { _, ok := o.(dialogLogger); return ok }, "LogsDialog() bool"},
 	{"OnArrival", func(o any) bool { _, ok := o.(arrivalNotifier); return ok }, "OnArrival(func())"},
+	{"PlayLink", func(o any) bool { _, ok := o.(control.LinkPlayer); return ok }, "PlayLink(ctx context.Context, link *url.URL) (title string, err error) и LinkHosts() []string"},
+	{"LinkHosts", func(o any) bool { _, ok := o.(control.LinkPlayer); return ok }, "LinkHosts() []string и PlayLink(ctx context.Context, link *url.URL) (title string, err error)"},
 }
 
 // hookMismatches — методы компонента, названные как точки расширения, но с другой подписью: демон их не вызовет.

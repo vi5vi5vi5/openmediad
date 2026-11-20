@@ -24,13 +24,14 @@ func (c Codec) String() string {
 	return "неизвестный"
 }
 
-// Extractor достаёт звук из сегментов потока: из MPEG-TS (обычный случай) или из «голых» сегментов AAC и MP3 с меткой ID3
-// в начале. На выходе — непрерывный элементарный поток (кадры ADTS или MP3), годный декодеру как есть.
+// Extractor достаёт звук из сегментов потока: из MPEG-TS (обычный случай), из fMP4 (fmp4.go) или из «голых» сегментов AAC
+// и MP3 с меткой ID3 в начале. На выходе — непрерывный элементарный поток (кадры ADTS или MP3), годный декодеру как есть.
 // Состояние (номера потоков TS) живёт между сегментами: сегменты подаются по порядку.
 type Extractor struct {
 	codec    Codec
-	raw      bool // сегменты — голый звук, не MPEG-TS
-	decided  bool // вид сегментов определён по первому
+	raw      bool  // сегменты — голый звук, не MPEG-TS
+	mp4      *fmp4 // сегменты fMP4
+	decided  bool  // вид сегментов определён по первому
 	pmtPID   int
 	audioPID int
 	started  bool // для звукового потока TS уже встречалось начало пакета PES
@@ -46,18 +47,30 @@ func (e *Extractor) Push(seg []byte) ([]byte, error) {
 	if !e.decided {
 		switch {
 		case len(seg) >= 2*tsPacket && seg[0] == 0x47 && seg[tsPacket] == 0x47:
-		case len(seg) >= 8 && (string(seg[4:8]) == "ftyp" || string(seg[4:8]) == "styp" || string(seg[4:8]) == "moof"):
-			return nil, fmt.Errorf("%w: сегменты fMP4", ErrUnsupported)
+		case len(seg) >= 8 && isMP4Box(string(seg[4:8])):
+			e.mp4 = &fmp4{}
+			e.codec = CodecAAC
 		default:
 			e.raw = true
 		}
 		e.decided = true
 		e.pmtPID, e.audioPID = -1, -1
 	}
+	if e.mp4 != nil {
+		return e.mp4.push(seg)
+	}
 	if e.raw {
 		return e.pushRaw(seg)
 	}
 	return e.pushTS(seg)
+}
+
+func isMP4Box(typ string) bool {
+	switch typ {
+	case "ftyp", "styp", "moov", "moof", "sidx":
+		return true
+	}
+	return false
 }
 
 // pushRaw — сегмент без контейнера: метка ID3v2 (в ней время сегмента) и кадры звука.

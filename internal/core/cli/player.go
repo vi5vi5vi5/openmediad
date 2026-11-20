@@ -19,7 +19,7 @@ var playerActions = map[string]string{
 var playerCmd = Command{
 	Name:    "player",
 	Summary: "кто играет; пауза, продолжить, следующий и предыдущий трек",
-	Usage:   "[pause | resume | toggle | next | prev] [-json]",
+	Usage:   "[pause | resume | toggle | next | prev | link ССЫЛКА] [-json]",
 	Help: `Без действия — кто играет сейчас: плееры движка (Spotify и другие), музыка платформы (Яндекс.Музыка) и кому достанется «продолжи».
 
 С действием — команда плееру, чей бы ни был звук: играет плеер движка — выполнит он; играет музыка платформы или ничего — команда
@@ -28,6 +28,9 @@ var playerCmd = Command{
   openmediad player            кто играет
   openmediad player toggle     пауза, если играет, и продолжить, если стоит
   openmediad player next       следующий трек
+  openmediad player link https://soundcloud.com/…
+                               включить музыку по ссылке (трек, альбом, плейлист): её включит плеер, чей это сервис —
+                               SoundCloud, Spotify, Яндекс Музыка, если они есть в сборке и включены
 
 Из своей программы то же самое доступно через сокет демона: docs/API.md.`,
 	Run: func(c *Ctx, args []string) error {
@@ -38,8 +41,32 @@ var playerCmd = Command{
 		if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
 			action, args = args[0], args[1:]
 		}
+		link := ""
+		if action == "link" {
+			if len(args) == 0 || strings.HasPrefix(args[0], "-") {
+				return UsageError{Msg: "нужна ссылка: openmediad player link ССЫЛКА"}
+			}
+			link, args = args[0], args[1:]
+		}
 		if err := parse(fs, args, 0); err != nil {
 			return err
+		}
+		if action == "link" {
+			var res ctlsock.LinkResult
+			if err := ctlsock.Call(ctlsock.SocketPath(), ctlsock.Request{Cmd: "link", Text: link}, &res); err != nil {
+				return err
+			}
+			if *asJSON {
+				b, _ := json.Marshal(res)
+				c.Printf("%s\n", b)
+				return nil
+			}
+			if res.Title != "" {
+				c.Printf("включено (%s): %s\n", res.Player, res.Title)
+			} else {
+				c.Printf("включено (%s)\n", res.Player)
+			}
+			return nil
 		}
 		if action == "" {
 			var p ctlsock.Playing
@@ -56,7 +83,7 @@ var playerCmd = Command{
 		}
 		act, ok := playerActions[action]
 		if !ok {
-			return UsageError{Msg: fmt.Sprintf("неизвестное действие %q: pause, resume, toggle, next или prev", action)}
+			return UsageError{Msg: fmt.Sprintf("неизвестное действие %q: pause, resume, toggle, next, prev или link", action)}
 		}
 		var res ctlsock.ControlResult
 		if err := ctlsock.Call(ctlsock.SocketPath(), ctlsock.Request{Cmd: "control", Action: act}, &res); err != nil {
