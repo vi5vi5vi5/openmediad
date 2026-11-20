@@ -486,3 +486,30 @@ func TestLive(t *testing.T) {
 	}
 	t.Logf("два сегмента: %d байт кадров ADTS", total)
 }
+
+// Прокси и client_id применяются на ходу (openmediad config set → reload); без прокси сетевая ошибка подсказывает его задать.
+func TestReloadAndProxyHint(t *testing.T) {
+	s := newStand(t, 200*time.Millisecond)
+	var got []string
+	s.c.newClient = func(p string) *http.Client { got = append(got, p); return s.f.srv.Client() }
+	next := *defaults()
+	next.Proxy, next.ClientID, next.MaxTracks = "http://127.0.0.1:3128", goodID, 1
+	if restart := s.c.Reload(&next); restart != nil || len(got) != 1 || got[0] != next.Proxy || s.c.api.fixed() != goodID {
+		t.Fatalf("reload: перезапуск %v, клиенты %v, client_id %q", restart, got, s.c.api.fixed())
+	}
+	if title, err := s.link(t, "soundcloud.com/forss/sets/soulhack"); err != nil || !strings.Contains(title, "1 трек") || s.f.pages.Load() != 0 {
+		t.Fatalf("после reload: %q, %v, страница сайта открыта %d раз", title, err, s.f.pages.Load())
+	}
+	bad := next
+	bad.Proxy = "ftp://x:1"
+	s.c.Reload(&bad) // негодные настройки не применяются
+	if s.c.config().Proxy != next.Proxy {
+		t.Fatal("применён негодный прокси")
+	}
+
+	off := newStand(t, time.Second)
+	off.c.api.base, off.c.api.site = "http://127.0.0.1:1", "http://127.0.0.1:1"
+	if _, err := off.link(t, "soundcloud.com/forss/flickermood"); err == nil || !strings.Contains(err.Error(), "soundcloud.proxy") {
+		t.Fatalf("без прокси и без связи: %v", err)
+	}
+}

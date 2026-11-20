@@ -121,9 +121,30 @@ type api struct {
 	statePath string // где помнить найденный client_id
 	logf      func(string, ...any)
 
+	cmu sync.Mutex // hc и fixedID: меняются на ходу (Reload)
+
 	mu    sync.Mutex
 	id    string // найденный client_id
 	found time.Time
+}
+
+// set меняет HTTP-клиент (прокси) и client_id из настроек на ходу (Reload).
+func (a *api) set(hc *http.Client, fixedID string) {
+	a.cmu.Lock()
+	a.hc, a.fixedID = hc, fixedID
+	a.cmu.Unlock()
+}
+
+func (a *api) client() *http.Client {
+	a.cmu.Lock()
+	defer a.cmu.Unlock()
+	return a.hc
+}
+
+func (a *api) fixed() string {
+	a.cmu.Lock()
+	defer a.cmu.Unlock()
+	return a.fixedID
 }
 
 type savedID struct {
@@ -133,8 +154,8 @@ type savedID struct {
 
 // clientID — client_id для запросов: из настроек, из памяти, из файла или найденный на сайте.
 func (a *api) clientID(ctx context.Context, refresh bool) (string, error) {
-	if a.fixedID != "" {
-		return a.fixedID, nil
+	if id := a.fixed(); id != "" {
+		return id, nil
 	}
 	a.mu.Lock()
 	defer a.mu.Unlock()
@@ -207,7 +228,7 @@ func (a *api) fetch(ctx context.Context, u string) ([]byte, error) {
 		return nil, err
 	}
 	req.Header.Set("User-Agent", userAgent)
-	resp, err := a.hc.Do(req)
+	resp, err := a.client().Do(req)
 	if err != nil {
 		return nil, plainErr(err)
 	}
@@ -246,7 +267,7 @@ func (a *api) get(ctx context.Context, rawurl string, q url.Values, out any) err
 		u.RawQuery = qq.Encode()
 		body, err := a.fetch(ctx, u.String())
 		var ae apiError
-		if errors.As(err, &ae) && (ae.status == http.StatusUnauthorized || ae.status == http.StatusForbidden) && a.fixedID == "" && attempt == 0 {
+		if errors.As(err, &ae) && (ae.status == http.StatusUnauthorized || ae.status == http.StatusForbidden) && a.fixed() == "" && attempt == 0 {
 			a.logf("client_id SoundCloud перестал подходить (%d): ищу новый", ae.status)
 			continue
 		}
@@ -419,7 +440,7 @@ func (a *api) expand(ctx context.Context, u *url.URL) (*url.URL, error) {
 		return nil, err
 	}
 	req.Header.Set("User-Agent", userAgent)
-	resp, err := a.hc.Do(req)
+	resp, err := a.client().Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("короткая ссылка SoundCloud не открылась: %w", plainErr(err))
 	}

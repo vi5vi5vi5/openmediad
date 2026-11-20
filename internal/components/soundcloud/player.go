@@ -55,8 +55,9 @@ type Component struct {
 	api    *api
 	led    led.Indicator
 	logf   func(string, ...any)
-	client *http.Client
 	newDec aac.Factory
+	// newClient — HTTP-клиент с прокси (Reload); nil — прокси на ходу не меняется (тесты).
+	newClient func(proxy string) *http.Client
 	// newSource — источник трека (тесты подменяют: без HLS и GStreamer).
 	newSource func(t track, streamURL string) engine.Source
 
@@ -78,9 +79,37 @@ func (c *Component) source(t track, streamURL string) engine.Source {
 	if c.newSource != nil {
 		return c.newSource(t, streamURL)
 	}
-	return newTrackSource(streamURL, time.Duration(t.DurationMs)*time.Millisecond, c.client, c.newDec, func(f string, a ...any) {
+	return newTrackSource(streamURL, time.Duration(t.DurationMs)*time.Millisecond, c.api.client(), c.newDec, func(f string, a ...any) {
 		c.logf("трек %d: %s", t.ID, fmt.Sprintf(f, a...))
 	})
+}
+
+func (c *Component) config() Config {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.cfg
+}
+
+// Reload применяет изменённые настройки на ходу (openmediad config set soundcloud.proxy …): прокси и client_id — со следующего запроса,
+// max_tracks — со следующей ссылки. Играющий трек доигрывается через старое соединение.
+func (c *Component) Reload(cfg any) (restart []string) {
+	n, ok := cfg.(*Config)
+	if !ok || n.validate() != nil {
+		return nil
+	}
+	c.mu.Lock()
+	old := c.cfg
+	c.cfg = *n
+	c.mu.Unlock()
+	if n.Proxy != old.Proxy || n.ClientID != old.ClientID {
+		hc := c.api.client()
+		if n.Proxy != old.Proxy && c.newClient != nil {
+			hc = c.newClient(n.Proxy)
+		}
+		c.api.set(hc, n.ClientID)
+		c.logf("настройки применены: прокси %s", map[bool]string{true: "задан", false: "нет"}[n.Proxy != ""])
+	}
+	return nil
 }
 
 // ---- музыка по ссылке (control.LinkPlayer) ----
@@ -106,8 +135,14 @@ func (c *Component) PlayLink(ctx context.Context, u *url.URL) (string, error) {
 	if strings.Trim(u.Path, "/") == "" {
 		return "", errors.New("в ссылке SoundCloud нет трека, плейлиста или исполнителя")
 	}
+	cfg := c.config()
 	it, err := c.api.resolve(ctx, canonical(u))
 	if err != nil {
+		var ae apiError
+		if cfg.Proxy == "" && !errors.As(err, &ae) && ctx.Err() == nil {
+			// SoundCloud не ответил вовсе (а не «нет такого»): из России так и бывает без прокси
+			return "", fmt.Errorf("%w. Из России SoundCloud без прокси недоступен: задайте его — openmediad config set soundcloud.proxy http://хост:порт", err)
+		}
 		return "", err
 	}
 	var list []track
@@ -125,15 +160,15 @@ func (c *Component) PlayLink(ctx context.Context, u *url.URL) (string, error) {
 		}
 		what = kind + " «" + it.Title + "»"
 	case "user":
-		if list, err = c.api.userTracks(ctx, it.User.ID, c.cfg.MaxTracks); err != nil {
+		if list, err = c.api.userTracks(ctx, it.User.ID, cfg.MaxTracks); err != nil {
 			return "", err
 		}
 		what = "треки " + it.User.Username
 	default:
 		return "", fmt.Errorf("ссылка SoundCloud ведёт на «%s»: включить можно трек, плейлист, альбом или исполнителя", it.Kind)
 	}
-	if len(list) > c.cfg.MaxTracks {
-		list = list[:c.cfg.MaxTracks]
+	if len(list) > cfg.MaxTracks {
+		list = list[:cfg.MaxTracks]
 	}
 	ok := list[:0:0]
 	var why error
@@ -422,6 +457,6 @@ func (c *Component) DebugState() any {
 	defer c.mu.Unlock()
 	return map[string]any{
 		"state": c.state.String(), "queue": len(c.queue), "pos": c.pos, "played": c.played, "last_error": c.lastErr,
-		"client_id": map[bool]string{true: "из настроек", false: "находится на сайте"}[c.cfg.ClientID != ""],
+		"client_id": map[bool]string{true: "из настроек", false: "находится на сайте"}[c.cfg.ClientID != ""], "proxy": c.cfg.Proxy != "",
 	}
 }

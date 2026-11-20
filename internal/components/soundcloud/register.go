@@ -95,7 +95,7 @@ func newComponent(cfg Config, eng *engine.Engine, hc *http.Client, statePath str
 		logf = func(string, ...any) {}
 	}
 	return &Component{
-		cfg: cfg, eng: eng, logf: logf, client: hc, newDec: aac.NewGst,
+		cfg: cfg, eng: eng, logf: logf, newDec: aac.NewGst, newClient: newClient,
 		api: &api{hc: hc, base: apiBase, site: siteBase, fixedID: cfg.ClientID, statePath: statePath, logf: logf},
 	}
 }
